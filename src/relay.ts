@@ -11,24 +11,27 @@ export class Relay {
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
   // TODO: Manage closing of one connection with the other (or whatever is desired)
-  // private wsServer: WebSocketServer;
+  private wsServer: WebSocketServer | undefined;
 
   public start(slippiAddress: string, slippiPort: number, wsPort: number): Promise<void> {
-    return this.startSlippiConnection(slippiAddress, slippiPort)
+    const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
       .then(() => this.startWebSocketServer(wsPort));
+
+    this.slippiConnection.on(ConnectionEvent.DATA, (data) => {
+      // TODO: Typescript fixes !
+      this.wsServer!.clients.forEach((ws) => ws.send(data));
+    });
+
+    return slippiConnectionPromise;
   }
 
   private startWebSocketServer(wsPort: number): void {
-    const wsServer = new WebSocketServer({ port: wsPort });
+    this.wsServer = new WebSocketServer({ port: wsPort });
     console.log('Serving WebSocket server on port', wsPort);
 
-    wsServer.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+    this.wsServer.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       console.log('Incoming WebSocket connection from', req.socket.remoteAddress);
       ws.onerror = console.error;
-
-      this.slippiConnection.on(ConnectionEvent.DATA, (data) => {
-        ws.send(data);
-      });
     });
   }
 
