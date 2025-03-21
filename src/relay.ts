@@ -1,6 +1,14 @@
 const { DolphinConnection } = require('@slippi/slippi-js');
 
-import { ConnectionStatus, ConnectionEvent, Connection } from '@slippi/slippi-js';
+import {
+  ConnectionStatus,
+  ConnectionEvent,
+  Connection, SlpStream,
+  SlpStreamMode,
+  SlpStreamEvent,
+  Command,
+  SlpRawEventPayload
+} from '@slippi/slippi-js';
 import { IncomingMessage } from 'node:http';
 import { WebSocketServer } from 'ws';
 
@@ -10,6 +18,11 @@ export class Relay {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
+  private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.MANUAL });
+  private currentGameMetadata: {
+    messageSizes: Buffer,
+    gameStart?: Buffer
+  } | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
   private wsServer: WebSocketServer | undefined;
 
@@ -20,6 +33,23 @@ export class Relay {
     this.slippiConnection.on(ConnectionEvent.DATA, (data) => {
       // TODO: Typescript fixes !
       this.wsServer!.clients.forEach((ws) => ws.send(data));
+      this.slpStream.write(data);
+    });
+
+    this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
+      const { command, payload } = data;
+      switch (command) {
+        case Command.MESSAGE_SIZES:
+          console.log('Reveived MESSAGE_SIZES event.');
+          this.currentGameMetadata = { messageSizes: payload };
+          break;
+        case Command.GAME_START:
+          this.currentGameMetadata!.gameStart = payload;
+          break;
+        case Command.GAME_END:
+          this.currentGameMetadata = undefined;
+          break;
+      }
     });
 
     return slippiConnectionPromise;
@@ -32,6 +62,14 @@ export class Relay {
     this.wsServer.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       console.log('Incoming WebSocket connection from', req.socket.remoteAddress);
       ws.onerror = console.error;
+
+      if (this.currentGameMetadata) {
+        const meta = [this.currentGameMetadata.messageSizes];
+        if (this.currentGameMetadata.gameStart) {
+         meta.push(this.currentGameMetadata.gameStart!);
+        }
+        ws.send(Buffer.concat(meta));
+      }
     });
   }
 
