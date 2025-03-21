@@ -44,10 +44,12 @@ export class Relay {
           this.currentGameMetadata = { messageSizes: payload };
           break;
         case Command.GAME_START:
+          console.log('Reveived GAME_START event.');
           this.currentGameMetadata!.gameStart = payload;
           break;
         case Command.GAME_END:
-          this.currentGameMetadata = undefined;
+          console.log('Reveived GAME_END event.');
+          this.currentGameMetadata!.gameStart = undefined;
           break;
       }
     });
