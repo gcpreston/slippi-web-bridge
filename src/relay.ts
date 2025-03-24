@@ -19,15 +19,25 @@ function bufferToArrayBuffer(b: Buffer) {
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
 }
 
+type Metadata = {
+  messageSizes: Buffer,
+  gameStart?: Buffer
+};
+
+function createMetadataBuffer(meta: Metadata): Buffer {
+  const b = [meta.messageSizes];
+  if (meta.gameStart) {
+    b.push(meta.gameStart!);
+  }
+  return Buffer.concat(b);
+}
+
 export class Relay {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.MANUAL });
-  private currentGameMetadata: {
-    messageSizes: Buffer,
-    gameStart?: Buffer
-  } | undefined;
+  private currentGameMetadata: Metadata | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
   private wsServer: WebSocketServer | undefined;
 
@@ -52,10 +62,12 @@ export class Relay {
         case Command.GAME_START:
           console.log('Reveived GAME_START event.');
           this.currentGameMetadata!.gameStart = payload;
+          this.phoenixChannel.push("metadata", createMetadataBuffer(this.currentGameMetadata!));
           break;
         case Command.GAME_END:
           console.log('Reveived GAME_END event.');
           this.currentGameMetadata!.gameStart = undefined;
+          this.phoenixChannel.push("metadata", createMetadataBuffer(this.currentGameMetadata!));
           break;
       }
     });
@@ -69,17 +81,14 @@ export class Relay {
     socket.connect();
 
     // Now that you are connected, you can join channels with a topic:
-    this.phoenixChannel = socket.channel("bridges", { hello: 'world' });
+    this.phoenixChannel = socket.channel("bridges");
     this.phoenixChannel.join()
       .receive("ok", (resp: any) => {
         console.log("Joined successfully", resp);
 
         if (this.currentGameMetadata) {
-          const meta = [this.currentGameMetadata.messageSizes];
-          if (this.currentGameMetadata.gameStart) {
-           meta.push(this.currentGameMetadata.gameStart!);
-          }
-          this.phoenixChannel.push("game_data", bufferToArrayBuffer(Buffer.concat(meta)));
+          const metadataBuffer = createMetadataBuffer(this.currentGameMetadata);
+          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
         }
       })
       .receive("error", (resp: any) => { console.log("Unable to join", resp) });
