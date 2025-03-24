@@ -15,6 +15,10 @@ import { Socket } from 'phoenix-channels';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
 
+function bufferToArrayBuffer(b: Buffer) {
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
+}
+
 export class Relay {
   // Most basic cases to start
   // only Dolphin connection
@@ -34,12 +38,7 @@ export class Relay {
       .then(() => this.startPhoenixConnection(phoenixUrl));
 
     this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
-      // TODO: See if this or Blob.prototype.arrayBuffer() is faster
-      // https://stackoverflow.com/a/31394257
-      // const ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
-      new Blob([b]).arrayBuffer().then((ab: ArrayBuffer) => {
-        this.phoenixChannel.push("game_data", ab);
-      });
+      this.phoenixChannel.push("game_data", bufferToArrayBuffer(b));
       this.slpStream.write(b);
     });
 
@@ -80,9 +79,7 @@ export class Relay {
           if (this.currentGameMetadata.gameStart) {
            meta.push(this.currentGameMetadata.gameStart!);
           }
-          new Blob(meta).arrayBuffer().then((buf) => {
-            this.phoenixChannel.push("game_data", buf)
-          })
+          this.phoenixChannel.push("game_data", bufferToArrayBuffer(Buffer.concat(meta)));
         }
       })
       .receive("error", (resp: any) => { console.log("Unable to join", resp) });
