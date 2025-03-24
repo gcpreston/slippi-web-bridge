@@ -11,37 +11,9 @@ import {
 } from '@slippi/slippi-js';
 import { IncomingMessage } from 'node:http';
 import { WebSocketServer } from 'ws';
-import { Socket, Channel } from 'phoenix-channels';
+import { Socket } from 'phoenix-channels';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
-
-const HEADER_LENGTH = 1;
-const META_LENGTH = 4;
-const KINDS = {push: 0, reply: 1, broadcast: 2};
-
-function binaryEncode(message: any) {
-  let {join_ref, ref, event, topic, payload} = message
-  let metaLength = META_LENGTH + join_ref.length + ref.length + topic.length + event.length
-  let header = new ArrayBuffer(HEADER_LENGTH + metaLength)
-  let view = new DataView(header)
-  let offset = 0
-
-  view.setUint8(offset++, KINDS.push) // kind
-  view.setUint8(offset++, join_ref.length)
-  view.setUint8(offset++, ref.length)
-  view.setUint8(offset++, topic.length)
-  view.setUint8(offset++, event.length)
-  Array.from(join_ref, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
-  Array.from(ref, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
-  Array.from(topic, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
-  Array.from(event, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
-
-  var combined = new Uint8Array(header.byteLength + payload.byteLength)
-  combined.set(new Uint8Array(header), 0)
-  combined.set(new Uint8Array(payload), header.byteLength)
-
-  return combined.buffer
-}
 
 export class Relay {
   // Most basic cases to start
@@ -61,10 +33,14 @@ export class Relay {
     const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
       .then(() => this.startPhoenixConnection(phoenixUrl));
 
-    this.slippiConnection.on(ConnectionEvent.DATA, (data: Buffer) => {
-      console.log('pushing', data);
-      this.phoenixChannel.push("game_data", data);
-      this.slpStream.write(data);
+    this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
+      // TODO: See if this or Blob.prototype.arrayBuffer() is faster
+      // https://stackoverflow.com/a/31394257
+      // const ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+      new Blob([b]).arrayBuffer().then((ab: ArrayBuffer) => {
+        this.phoenixChannel.push("game_data", ab);
+      });
+      this.slpStream.write(b);
     });
 
     this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
@@ -89,7 +65,7 @@ export class Relay {
   }
 
   private startPhoenixConnection(phoenixUrl: string): void {
-    let socket = new Socket(phoenixUrl, { encoder: binaryEncode });
+    let socket = new Socket(phoenixUrl);
 
     socket.connect();
 
@@ -104,7 +80,9 @@ export class Relay {
           if (this.currentGameMetadata.gameStart) {
            meta.push(this.currentGameMetadata.gameStart!);
           }
-          this.phoenixChannel.push("game_data", new Blob(meta));
+          new Blob(meta).arrayBuffer().then((buf) => {
+            this.phoenixChannel.push("game_data", buf)
+          })
         }
       })
       .receive("error", (resp: any) => { console.log("Unable to join", resp) });
