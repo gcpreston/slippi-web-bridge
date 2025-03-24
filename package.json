@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@slippi/slippi-js": "^6.7.0",
+    "phoenix-channels": "^1.0.0",
     "ws": "^8.18.1"
   }
 }

@@ -11,8 +11,37 @@ import {
 } from '@slippi/slippi-js';
 import { IncomingMessage } from 'node:http';
 import { WebSocketServer } from 'ws';
+import { Socket, Channel } from 'phoenix-channels';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
+
+const HEADER_LENGTH = 1;
+const META_LENGTH = 4;
+const KINDS = {push: 0, reply: 1, broadcast: 2};
+
+function binaryEncode(message: any) {
+  let {join_ref, ref, event, topic, payload} = message
+  let metaLength = META_LENGTH + join_ref.length + ref.length + topic.length + event.length
+  let header = new ArrayBuffer(HEADER_LENGTH + metaLength)
+  let view = new DataView(header)
+  let offset = 0
+
+  view.setUint8(offset++, KINDS.push) // kind
+  view.setUint8(offset++, join_ref.length)
+  view.setUint8(offset++, ref.length)
+  view.setUint8(offset++, topic.length)
+  view.setUint8(offset++, event.length)
+  Array.from(join_ref, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
+  Array.from(ref, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
+  Array.from(topic, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
+  Array.from(event, (char: any) => view.setUint8(offset++, char.charCodeAt(0)))
+
+  var combined = new Uint8Array(header.byteLength + payload.byteLength)
+  combined.set(new Uint8Array(header), 0)
+  combined.set(new Uint8Array(payload), header.byteLength)
+
+  return combined.buffer
+}
 
 export class Relay {
   // Most basic cases to start
@@ -26,13 +55,15 @@ export class Relay {
   // TODO: Manage closing of one connection with the other (or whatever is desired)
   private wsServer: WebSocketServer | undefined;
 
-  public start(slippiAddress: string, slippiPort: number, wsPort: number): Promise<void> {
-    const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
-      .then(() => this.startWebSocketServer(wsPort));
+  private phoenixChannel: any;
 
-    this.slippiConnection.on(ConnectionEvent.DATA, (data) => {
-      // TODO: Typescript fixes !
-      this.wsServer!.clients.forEach((ws) => ws.send(data));
+  public start(slippiAddress: string, slippiPort: number, phoenixUrl: string): Promise<void> {
+    const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
+      .then(() => this.startPhoenixConnection(phoenixUrl));
+
+    this.slippiConnection.on(ConnectionEvent.DATA, (data: Buffer) => {
+      console.log('pushing', data);
+      this.phoenixChannel.push("game_data", data);
       this.slpStream.write(data);
     });
 
@@ -55,6 +86,28 @@ export class Relay {
     });
 
     return slippiConnectionPromise;
+  }
+
+  private startPhoenixConnection(phoenixUrl: string): void {
+    let socket = new Socket(phoenixUrl, { encoder: binaryEncode });
+
+    socket.connect();
+
+    // Now that you are connected, you can join channels with a topic:
+    this.phoenixChannel = socket.channel("bridges", { hello: 'world' });
+    this.phoenixChannel.join()
+      .receive("ok", (resp: any) => {
+        console.log("Joined successfully", resp);
+
+        if (this.currentGameMetadata) {
+          const meta = [this.currentGameMetadata.messageSizes];
+          if (this.currentGameMetadata.gameStart) {
+           meta.push(this.currentGameMetadata.gameStart!);
+          }
+          this.phoenixChannel.push("game_data", new Blob(meta));
+        }
+      })
+      .receive("error", (resp: any) => { console.log("Unable to join", resp) });
   }
 
   private startWebSocketServer(wsPort: number): void {
