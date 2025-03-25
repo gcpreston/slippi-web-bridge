@@ -54,6 +54,7 @@ export class Relay {
 
     this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
       const { command, payload } = data;
+      let metadataBuffer = null;
       switch (command) {
         case Command.MESSAGE_SIZES:
           console.log('Reveived MESSAGE_SIZES event.');
@@ -62,12 +63,14 @@ export class Relay {
         case Command.GAME_START:
           console.log('Reveived GAME_START event.');
           this.currentGameMetadata!.gameStart = payload;
-          this.phoenixChannel.push("metadata", createMetadataBuffer(this.currentGameMetadata!));
+          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
+          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
           break;
         case Command.GAME_END:
           console.log('Reveived GAME_END event.');
           this.currentGameMetadata!.gameStart = undefined;
-          this.phoenixChannel.push("metadata", createMetadataBuffer(this.currentGameMetadata!));
+          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
+          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
           break;
       }
     });
@@ -92,24 +95,6 @@ export class Relay {
         }
       })
       .receive("error", (resp: any) => { console.log("Unable to join", resp) });
-  }
-
-  private startWebSocketServer(wsPort: number): void {
-    this.wsServer = new WebSocketServer({ port: wsPort });
-    console.log('Serving WebSocket server on port', wsPort);
-
-    this.wsServer.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-      console.log('Incoming WebSocket connection from', req.socket.remoteAddress);
-      ws.onerror = console.error;
-
-      if (this.currentGameMetadata) {
-        const meta = [this.currentGameMetadata.messageSizes];
-        if (this.currentGameMetadata.gameStart) {
-         meta.push(this.currentGameMetadata.gameStart!);
-        }
-        ws.send(Buffer.concat(meta));
-      }
-    });
   }
 
   // startSlippiConnection and promiseTimeout taken from
