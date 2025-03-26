@@ -83,8 +83,8 @@ export class Relay {
 
     socket.connect();
 
-    // Now that you are connected, you can join channels with a topic:
-    this.phoenixChannel = socket.channel("bridges");
+    const bridgeId = "test_bridge"
+    this.phoenixChannel = socket.channel("bridges", { bridge_id: bridgeId });
     this.phoenixChannel.join()
       .receive("ok", (resp: any) => {
         console.log("Joined successfully", resp);
