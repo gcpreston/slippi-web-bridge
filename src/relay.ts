@@ -36,7 +36,7 @@ export class Relay {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
-  private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.MANUAL });
+  private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
   private currentGameMetadata: Metadata | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
   private wsServer: WebSocketServer | undefined;
@@ -91,6 +91,7 @@ export class Relay {
 
         if (this.currentGameMetadata) {
           const metadataBuffer = createMetadataBuffer(this.currentGameMetadata);
+          console.log('sending metadata', this.currentGameMetadata);
           this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
         }
       })
