@@ -9,35 +9,49 @@ import {
   Command,
   SlpRawEventPayload
 } from '@slippi/slippi-js';
-import { IncomingMessage } from 'node:http';
-import { WebSocketServer } from 'ws';
+import { Socket } from 'phoenix-channels';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
+
+function bufferToArrayBuffer(b: Buffer) {
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
+}
+
+type Metadata = {
+  messageSizes: Buffer,
+  gameStart?: Buffer
+};
+
+function createMetadataBuffer(meta: Metadata): Buffer {
+  const b = [meta.messageSizes];
+  if (meta.gameStart) {
+    b.push(meta.gameStart!);
+  }
+  return Buffer.concat(b);
+}
 
 export class Relay {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
-  private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.MANUAL });
-  private currentGameMetadata: {
-    messageSizes: Buffer,
-    gameStart?: Buffer
-  } | undefined;
+  private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
+  private currentGameMetadata: Metadata | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
-  private wsServer: WebSocketServer | undefined;
 
-  public start(slippiAddress: string, slippiPort: number, wsPort: number): Promise<void> {
+  private phoenixChannel: any;
+
+  public start(slippiAddress: string, slippiPort: number, phoenixUrl: string): Promise<void> {
     const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
-      .then(() => this.startWebSocketServer(wsPort));
+      .then(() => this.startPhoenixConnection(phoenixUrl));
 
-    this.slippiConnection.on(ConnectionEvent.DATA, (data) => {
-      // TODO: Typescript fixes !
-      this.wsServer!.clients.forEach((ws) => ws.send(data));
-      this.slpStream.write(data);
+    this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
+      this.phoenixChannel.push("game_data", bufferToArrayBuffer(b));
+      this.slpStream.write(b);
     });
 
     this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
       const { command, payload } = data;
+      let metadataBuffer = null;
       switch (command) {
         case Command.MESSAGE_SIZES:
           console.log('Reveived MESSAGE_SIZES event.');
@@ -46,10 +60,14 @@ export class Relay {
         case Command.GAME_START:
           console.log('Reveived GAME_START event.');
           this.currentGameMetadata!.gameStart = payload;
+          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
+          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
           break;
         case Command.GAME_END:
           console.log('Reveived GAME_END event.');
           this.currentGameMetadata!.gameStart = undefined;
+          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
+          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
           break;
       }
     });
@@ -57,22 +75,25 @@ export class Relay {
     return slippiConnectionPromise;
   }
 
-  private startWebSocketServer(wsPort: number): void {
-    this.wsServer = new WebSocketServer({ port: wsPort });
-    console.log('Serving WebSocket server on port', wsPort);
+  private startPhoenixConnection(phoenixUrl: string): void {
+    let socket = new Socket(phoenixUrl);
 
-    this.wsServer.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-      console.log('Incoming WebSocket connection from', req.socket.remoteAddress);
-      ws.onerror = console.error;
+    socket.connect();
 
-      if (this.currentGameMetadata) {
-        const meta = [this.currentGameMetadata.messageSizes];
-        if (this.currentGameMetadata.gameStart) {
-         meta.push(this.currentGameMetadata.gameStart!);
+    const bridgeId = "test_bridge"
+    this.phoenixChannel = socket.channel("bridges", { bridge_id: bridgeId });
+    console.log('Connecting bridge', bridgeId);
+    this.phoenixChannel.join()
+      .receive("ok", (resp: any) => {
+        console.log("Joined successfully", resp);
+
+        if (this.currentGameMetadata) {
+          const metadataBuffer = createMetadataBuffer(this.currentGameMetadata);
+          console.log('sending metadata', this.currentGameMetadata);
+          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
         }
-        ws.send(Buffer.concat(meta));
-      }
-    });
+      })
+      .receive("error", (resp: any) => { console.log("Unable to join", resp) });
   }
 
   // startSlippiConnection and promiseTimeout taken from
