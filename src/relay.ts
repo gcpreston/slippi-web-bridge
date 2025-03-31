@@ -9,8 +9,6 @@ import {
   Command,
   SlpRawEventPayload
 } from '@slippi/slippi-js';
-import { IncomingMessage } from 'node:http';
-import { WebSocketServer } from 'ws';
 import { Socket } from 'phoenix-channels';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
@@ -39,7 +37,6 @@ export class Relay {
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
   private currentGameMetadata: Metadata | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
-  private wsServer: WebSocketServer | undefined;
 
   private phoenixChannel: any;
 
@@ -85,6 +82,7 @@ export class Relay {
 
     const bridgeId = "test_bridge"
     this.phoenixChannel = socket.channel("bridges", { bridge_id: bridgeId });
+    console.log('Connecting bridge', bridgeId);
     this.phoenixChannel.join()
       .receive("ok", (resp: any) => {
         console.log("Joined successfully", resp);
