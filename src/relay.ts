@@ -38,14 +38,14 @@ export class Relay {
   private currentGameMetadata: Metadata | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
 
-  private phoenixChannel: any;
+  private ws?: WebSocket;
 
   public start(slippiAddress: string, slippiPort: number, phoenixUrl: string): Promise<void> {
     const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
       .then(() => this.startPhoenixConnection(phoenixUrl));
 
     this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
-      this.phoenixChannel.push("game_data", bufferToArrayBuffer(b));
+      this.ws!.send(bufferToArrayBuffer(b));
       this.slpStream.write(b);
     });
 
@@ -61,13 +61,13 @@ export class Relay {
           console.log('Reveived GAME_START event.');
           this.currentGameMetadata!.gameStart = payload;
           metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
+          // this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
           break;
         case Command.GAME_END:
           console.log('Reveived GAME_END event.');
           this.currentGameMetadata!.gameStart = undefined;
           metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
+          // this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
           break;
       }
     });
@@ -76,24 +76,17 @@ export class Relay {
   }
 
   private startPhoenixConnection(phoenixUrl: string): void {
-    let socket = new Socket(phoenixUrl);
-
-    socket.connect();
-
     const bridgeId = "test_bridge"
-    this.phoenixChannel = socket.channel("bridges", { bridge_id: bridgeId });
-    console.log('Connecting bridge', bridgeId);
-    this.phoenixChannel.join()
-      .receive("ok", (resp: any) => {
-        console.log("Joined successfully", resp);
+    this.ws = new WebSocket(phoenixUrl + "?bridge_id=" + bridgeId);
+    console.log("Connected bridge:", bridgeId);
 
-        if (this.currentGameMetadata) {
-          const metadataBuffer = createMetadataBuffer(this.currentGameMetadata);
-          console.log('sending metadata', this.currentGameMetadata);
-          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
-        }
-      })
-      .receive("error", (resp: any) => { console.log("Unable to join", resp) });
+    /*
+    if (this.currentGameMetadata) {
+      const metadataBuffer = createMetadataBuffer(this.currentGameMetadata);
+      console.log('sending metadata', this.currentGameMetadata);
+      this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
+    }
+    */
   }
 
   // startSlippiConnection and promiseTimeout taken from
