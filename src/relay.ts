@@ -41,52 +41,31 @@ export class Relay {
   private ws?: WebSocket;
 
   public start(slippiAddress: string, slippiPort: number, phoenixUrl: string): Promise<void> {
-    const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
-      .then(() => this.startPhoenixConnection(phoenixUrl));
-
-    this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
-      this.ws!.send(bufferToArrayBuffer(b));
-      this.slpStream.write(b);
-    });
-
-    this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
-      const { command, payload } = data;
-      let metadataBuffer = null;
-      switch (command) {
-        case Command.MESSAGE_SIZES:
-          console.log('Reveived MESSAGE_SIZES event.');
-          this.currentGameMetadata = { messageSizes: payload };
-          break;
-        case Command.GAME_START:
-          console.log('Reveived GAME_START event.');
-          this.currentGameMetadata!.gameStart = payload;
-          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-          // this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
-          break;
-        case Command.GAME_END:
-          console.log('Reveived GAME_END event.');
-          this.currentGameMetadata!.gameStart = undefined;
-          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-          // this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
-          break;
-      }
-    });
-
-    return slippiConnectionPromise;
+    return this.startPhoenixConnection(phoenixUrl)
+      .then(() => this.startSlippiConnection(slippiAddress, slippiPort));
   }
 
-  private startPhoenixConnection(phoenixUrl: string): void {
-    const bridgeId = "test_bridge"
-    this.ws = new WebSocket(phoenixUrl + "?bridge_id=" + bridgeId);
-    console.log("Connected bridge:", bridgeId);
+  private startPhoenixConnection(phoenixUrl: string): Promise<void> {
+    const bridgeId = "test_bridge";
 
-    /*
-    if (this.currentGameMetadata) {
-      const metadataBuffer = createMetadataBuffer(this.currentGameMetadata);
-      console.log('sending metadata', this.currentGameMetadata);
-      this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
-    }
-    */
+    return new Promise((resolve, reject) => {
+      this.ws = new WebSocket(phoenixUrl + "?bridge_id=" + bridgeId);
+
+      this.ws.onopen = (msg: any) => {
+        console.log("Connected bridge:", bridgeId);
+        console.log("Connection message:", msg);
+        resolve();
+      };
+
+      this.ws.onclose = (msg) => {
+        console.log("WebSocket connection closed:", msg);
+      };
+
+      this.ws.onerror = (err) => {
+        console.error(err);
+        reject();
+      }
+    });
   }
 
   // startSlippiConnection and promiseTimeout taken from
@@ -114,6 +93,35 @@ export class Relay {
         }
       };
       this.slippiConnection.on(ConnectionEvent.STATUS_CHANGE, onStatusChange);
+
+      this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
+        console.log('got data size', b.length);
+        this.ws!.send(bufferToArrayBuffer(b));
+        this.slpStream.write(b);
+      });
+
+      this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
+        const { command, payload } = data;
+        let metadataBuffer = null;
+        switch (command) {
+          case Command.MESSAGE_SIZES:
+            console.log('Reveived MESSAGE_SIZES event.', payload);
+            this.currentGameMetadata = { messageSizes: payload };
+            break;
+          case Command.GAME_START:
+            console.log('Reveived GAME_START event.', payload);
+            this.currentGameMetadata!.gameStart = payload;
+            metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
+            // this.ws!.send(bufferToArrayBuffer(metadataBuffer));
+            break;
+          case Command.GAME_END:
+            console.log('Reveived GAME_END event.');
+            this.currentGameMetadata!.gameStart = undefined;
+            metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
+            // this.ws!.send(bufferToArrayBuffer(metadataBuffer));
+            break;
+        }
+      });
 
       try {
         // Actually try to connect
