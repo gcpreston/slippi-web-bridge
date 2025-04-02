@@ -7,5 +7,4 @@ const SLIPPI_PORT = Ports.DEFAULT;
 const PHOENIX_URL = 'ws://127.0.0.1:4000/bridge_socket/websocket';
 // const PHOENIX_URL = 'wss://spectator-mode.fly.dev/socket';
 
-const relay = new Relay();
-relay.start(SLIPPI_ADDRESS, SLIPPI_PORT, PHOENIX_URL)
+export const relay = new Relay(SLIPPI_ADDRESS, SLIPPI_PORT, PHOENIX_URL);

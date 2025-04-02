@@ -9,7 +9,6 @@ import {
   Command,
   SlpRawEventPayload
 } from '@slippi/slippi-js';
-import { Socket } from 'phoenix-channels';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
 
@@ -30,6 +29,8 @@ function createMetadataBuffer(meta: Metadata): Buffer {
   return Buffer.concat(b);
 }
 
+const bridgeId = "test_bridge";
+
 export class Relay {
   // Most basic cases to start
   // only Dolphin connection
@@ -38,34 +39,23 @@ export class Relay {
   private currentGameMetadata: Metadata | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
 
-  private ws?: WebSocket;
+  private ws: WebSocket;
 
-  public start(slippiAddress: string, slippiPort: number, phoenixUrl: string): Promise<void> {
-    return this.startPhoenixConnection(phoenixUrl)
-      .then(() => this.startSlippiConnection(slippiAddress, slippiPort));
-  }
+  constructor(slippiAddress: string, slippiPort: number, phoenixUrl: string) {
+    this.ws = new WebSocket(phoenixUrl + "?bridge_id=" + bridgeId);
 
-  private startPhoenixConnection(phoenixUrl: string): Promise<void> {
-    const bridgeId = "test_bridge";
+    this.ws.onopen = () => {
+      console.log("Connected bridge:", bridgeId);
+      this.startSlippiConnection(slippiAddress, slippiPort);
+    };
 
-    return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(phoenixUrl + "?bridge_id=" + bridgeId);
+    this.ws.onclose = (msg) => {
+      console.log("WebSocket connection closed:", msg);
+    };
 
-      this.ws.onopen = (msg: any) => {
-        console.log("Connected bridge:", bridgeId);
-        console.log("Connection message:", msg);
-        resolve();
-      };
-
-      this.ws.onclose = (msg) => {
-        console.log("WebSocket connection closed:", msg);
-      };
-
-      this.ws.onerror = (err) => {
-        console.error(err);
-        reject();
-      }
-    });
+    this.ws.onerror = (err) => {
+      console.error(err);
+    }
   }
 
   // startSlippiConnection and promiseTimeout taken from
@@ -95,8 +85,7 @@ export class Relay {
       this.slippiConnection.on(ConnectionEvent.STATUS_CHANGE, onStatusChange);
 
       this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
-        console.log('got data size', b.length);
-        this.ws!.send(bufferToArrayBuffer(b));
+        this.ws.send(bufferToArrayBuffer(b));
         this.slpStream.write(b);
       });
 
@@ -105,20 +94,20 @@ export class Relay {
         let metadataBuffer = null;
         switch (command) {
           case Command.MESSAGE_SIZES:
-            console.log('Reveived MESSAGE_SIZES event.', payload);
+            console.log('Reveived MESSAGE_SIZES event.');
             this.currentGameMetadata = { messageSizes: payload };
             break;
           case Command.GAME_START:
-            console.log('Reveived GAME_START event.', payload);
+            console.log('Reveived GAME_START event.');
             this.currentGameMetadata!.gameStart = payload;
             metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-            // this.ws!.send(bufferToArrayBuffer(metadataBuffer));
+            this.ws.send(bufferToArrayBuffer(metadataBuffer));
             break;
           case Command.GAME_END:
             console.log('Reveived GAME_END event.');
             this.currentGameMetadata!.gameStart = undefined;
             metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-            // this.ws!.send(bufferToArrayBuffer(metadataBuffer));
+            this.ws.send(bufferToArrayBuffer(metadataBuffer));
             break;
         }
       });
