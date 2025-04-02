@@ -39,13 +39,19 @@ export class Bridge {
   // TODO: Manage closing of one connection with the other (or whatever is desired)
 
   private ws: WebSocket;
+  public bridgeId?: string;
 
   constructor(slippiAddress: string, slippiPort: number, phoenixUrl: string) {
-    this.ws = new WebSocket(phoenixUrl + "?bridge_id=" + bridgeId);
+    this.ws = new WebSocket(phoenixUrl);
 
     this.ws.onopen = () => {
-      console.log("Connected bridge:", bridgeId);
+      console.log("Connected bridge.");
       this.startSlippiConnection(slippiAddress, slippiPort);
+    };
+
+    this.ws.onmessage = (msg) => {
+      console.log("Bridge ID:", msg.data);
+      this.bridgeId = msg.data;
     };
 
     this.ws.onclose = (msg) => {
