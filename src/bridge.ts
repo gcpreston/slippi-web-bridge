@@ -1,5 +1,4 @@
-const { DolphinConnection } = require('@slippi/slippi-js');
-
+import { DolphinConnection } from '@slippi/slippi-js';
 import {
   ConnectionStatus,
   ConnectionEvent,
@@ -91,7 +90,7 @@ export class Bridge {
 
       this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
         const { command, payload } = data;
-        let metadataBuffer = null;
+        let metadataBuffer: Buffer | null = null;
         switch (command) {
           case Command.MESSAGE_SIZES:
             console.log('Reveived MESSAGE_SIZES event.');
