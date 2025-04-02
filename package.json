@@ -1,13 +1,12 @@
 {
   "name": "slippi-web-bridge",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Forward live Slippi connection data to a WebSocket connection.",
   "main": "index.ts",
   "scripts": {
     "build": "tsc -p .",
-    "start": "npm run build && node build/index.js",
-    "clean": "rm -r build/",
-    "sandbox": "npm run build && node build/sandbox.js"
+    "start": "npm run build && node build/runLocal.js",
+    "clean": "rm -r build/"
   },
   "author": "Graham Preston",
   "license": "ISC",
@@ -17,8 +16,6 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@slippi/slippi-js": "^6.7.0",
-    "phoenix-channels": "file:lib/phoenix-channels",
-    "ws": "^8.18.1"
+    "@slippi/slippi-js": "^6.7.0"
   }
 }
