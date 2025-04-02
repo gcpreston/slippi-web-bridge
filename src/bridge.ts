@@ -31,7 +31,7 @@ function createMetadataBuffer(meta: Metadata): Buffer {
 
 const bridgeId = "test_bridge";
 
-export class Relay {
+export class Bridge {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
