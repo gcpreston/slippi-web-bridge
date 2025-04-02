@@ -1,5 +1,4 @@
-const { DolphinConnection } = require('@slippi/slippi-js');
-
+import { DolphinConnection } from '@slippi/slippi-js';
 import {
   ConnectionStatus,
   ConnectionEvent,
@@ -9,7 +8,6 @@ import {
   Command,
   SlpRawEventPayload
 } from '@slippi/slippi-js';
-import { Socket } from 'phoenix-channels';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
 
@@ -30,7 +28,7 @@ function createMetadataBuffer(meta: Metadata): Buffer {
   return Buffer.concat(b);
 }
 
-export class Relay {
+export class Bridge {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
@@ -38,62 +36,29 @@ export class Relay {
   private currentGameMetadata: Metadata | undefined;
   // TODO: Manage closing of one connection with the other (or whatever is desired)
 
-  private phoenixChannel: any;
+  private ws: WebSocket;
+  public bridgeId?: string;
 
-  public start(slippiAddress: string, slippiPort: number, phoenixUrl: string): Promise<void> {
-    const slippiConnectionPromise = this.startSlippiConnection(slippiAddress, slippiPort)
-      .then(() => this.startPhoenixConnection(phoenixUrl));
+  constructor(slippiAddress: string, slippiPort: number, phoenixUrl: string) {
+    this.ws = new WebSocket(phoenixUrl);
 
-    this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
-      this.phoenixChannel.push("game_data", bufferToArrayBuffer(b));
-      this.slpStream.write(b);
-    });
+    this.ws.onopen = () => {
+      console.log("Connected bridge.");
+      this.startSlippiConnection(slippiAddress, slippiPort);
+    };
 
-    this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
-      const { command, payload } = data;
-      let metadataBuffer = null;
-      switch (command) {
-        case Command.MESSAGE_SIZES:
-          console.log('Reveived MESSAGE_SIZES event.');
-          this.currentGameMetadata = { messageSizes: payload };
-          break;
-        case Command.GAME_START:
-          console.log('Reveived GAME_START event.');
-          this.currentGameMetadata!.gameStart = payload;
-          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
-          break;
-        case Command.GAME_END:
-          console.log('Reveived GAME_END event.');
-          this.currentGameMetadata!.gameStart = undefined;
-          metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
-          break;
-      }
-    });
+    this.ws.onmessage = (msg) => {
+      console.log("Bridge ID:", msg.data);
+      this.bridgeId = msg.data;
+    };
 
-    return slippiConnectionPromise;
-  }
+    this.ws.onclose = (msg) => {
+      console.log("WebSocket connection closed:", msg);
+    };
 
-  private startPhoenixConnection(phoenixUrl: string): void {
-    let socket = new Socket(phoenixUrl);
-
-    socket.connect();
-
-    const bridgeId = "test_bridge"
-    this.phoenixChannel = socket.channel("bridges", { bridge_id: bridgeId });
-    console.log('Connecting bridge', bridgeId);
-    this.phoenixChannel.join()
-      .receive("ok", (resp: any) => {
-        console.log("Joined successfully", resp);
-
-        if (this.currentGameMetadata) {
-          const metadataBuffer = createMetadataBuffer(this.currentGameMetadata);
-          console.log('sending metadata', this.currentGameMetadata);
-          this.phoenixChannel.push("metadata", bufferToArrayBuffer(metadataBuffer));
-        }
-      })
-      .receive("error", (resp: any) => { console.log("Unable to join", resp) });
+    this.ws.onerror = (err) => {
+      console.error(err);
+    }
   }
 
   // startSlippiConnection and promiseTimeout taken from
@@ -121,6 +86,29 @@ export class Relay {
         }
       };
       this.slippiConnection.on(ConnectionEvent.STATUS_CHANGE, onStatusChange);
+
+      this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
+        this.ws.send(bufferToArrayBuffer(b));
+        this.slpStream.write(b);
+      });
+
+      this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
+        const { command, payload } = data;
+        switch (command) {
+          case Command.MESSAGE_SIZES:
+            console.log('Received MESSAGE_SIZES event.');
+            this.currentGameMetadata = { messageSizes: payload };
+            break;
+          case Command.GAME_START:
+            console.log('Received GAME_START event.');
+            this.currentGameMetadata!.gameStart = payload;
+            break;
+          case Command.GAME_END:
+            console.log('Received GAME_END event.');
+            this.currentGameMetadata!.gameStart = undefined;
+            break;
+        }
+      });
 
       try {
         // Actually try to connect
