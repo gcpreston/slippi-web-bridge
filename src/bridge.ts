@@ -28,8 +28,6 @@ function createMetadataBuffer(meta: Metadata): Buffer {
   return Buffer.concat(b);
 }
 
-const bridgeId = "test_bridge";
-
 export class Bridge {
   // Most basic cases to start
   // only Dolphin connection
@@ -96,23 +94,18 @@ export class Bridge {
 
       this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
         const { command, payload } = data;
-        let metadataBuffer: Buffer | null = null;
         switch (command) {
           case Command.MESSAGE_SIZES:
-            console.log('Reveived MESSAGE_SIZES event.');
+            console.log('Received MESSAGE_SIZES event.');
             this.currentGameMetadata = { messageSizes: payload };
             break;
           case Command.GAME_START:
-            console.log('Reveived GAME_START event.');
+            console.log('Received GAME_START event.');
             this.currentGameMetadata!.gameStart = payload;
-            metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-            this.ws.send(bufferToArrayBuffer(metadataBuffer));
             break;
           case Command.GAME_END:
-            console.log('Reveived GAME_END event.');
+            console.log('Received GAME_END event.');
             this.currentGameMetadata!.gameStart = undefined;
-            metadataBuffer = createMetadataBuffer(this.currentGameMetadata!)
-            this.ws.send(bufferToArrayBuffer(metadataBuffer));
             break;
         }
       });
