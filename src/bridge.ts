@@ -1,12 +1,15 @@
-import { DolphinConnection } from '@slippi/slippi-js';
+import { EventEmitter } from 'events';
+import { DolphinConnection, GameStartType } from '@slippi/slippi-js';
 import {
   ConnectionStatus,
   ConnectionEvent,
-  Connection, SlpStream,
+  Connection,
+  SlpStream,
   SlpStreamMode,
   SlpStreamEvent,
   Command,
-  SlpRawEventPayload
+  SlpRawEventPayload,
+  SlpCommandEventPayload
 } from '@slippi/slippi-js';
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
@@ -20,6 +23,17 @@ type Metadata = {
   gameStart?: Buffer
 };
 
+/**
+ * TODO: Document implications of each state, already in notes
+ */
+export enum BridgeState {
+  WS_CONNECTING = "swb-ws-connecting",
+  SLIPPI_CONNECTING = "swb-slippi-connecting",
+  WAITING_FOR_GAME = "swb-waiting-for-game",
+  IN_GAME = "swb-in-game",
+  DISCONNECTED = "swb-disconnected"
+}
+
 function createMetadataBuffer(meta: Metadata): Buffer {
   const b = [meta.messageSizes];
   if (meta.gameStart) {
@@ -28,7 +42,8 @@ function createMetadataBuffer(meta: Metadata): Buffer {
   return Buffer.concat(b);
 }
 
-export class Bridge {
+// TODO: Add type to eventemitter
+export class Bridge extends EventEmitter {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
@@ -39,26 +54,53 @@ export class Bridge {
   private ws: WebSocket;
   public bridgeId?: string;
 
+  private state: BridgeState;
+
   constructor(slippiAddress: string, slippiPort: number, phoenixUrl: string) {
+    super();
+
+    this.state = BridgeState.WS_CONNECTING;
     this.ws = new WebSocket(phoenixUrl);
 
     this.ws.onopen = () => {
+      this.transition(BridgeState.SLIPPI_CONNECTING);
       console.log("Connected bridge.");
       this.startSlippiConnection(slippiAddress, slippiPort);
     };
 
-    this.ws.onmessage = (msg) => {
-      console.log("Bridge ID:", msg.data);
-      this.bridgeId = msg.data;
-    };
+    // TODO: Is the server echoing every packet???
+    // this.ws.onmessage = (msg) => {
+    //   console.log("Bridge ID:", msg.data);
+    //   this.bridgeId = msg.data;
+    // };
 
     this.ws.onclose = (msg) => {
       console.log("WebSocket connection closed:", msg);
+      // TODO: Test and cleanup
+      this.transition(BridgeState.DISCONNECTED);
     };
 
     this.ws.onerror = (err) => {
       console.error(err);
+      // TODO: Test and cleanup
+      this.transition(BridgeState.DISCONNECTED);
     }
+  }
+
+  public disconnect(): void {
+    this.slippiConnection.disconnect();
+    this.ws.close();
+    this.emit(BridgeState.DISCONNECTED);
+  }
+
+  public getState(): BridgeState {
+    return this.state;
+  }
+
+  private transition(newState: BridgeState, payload?: any): void {
+    // TODO: Assert valid transition
+    this.state = newState;
+    this.emit(newState, payload);
   }
 
   // startSlippiConnection and promiseTimeout taken from
@@ -77,6 +119,7 @@ export class Bridge {
         // Complete the promise
         switch (status) {
           case ConnectionStatus.CONNECTED:
+            this.transition(BridgeState.WAITING_FOR_GAME);
             console.log('Connected to Slippi.');
             resolve();
             break;
@@ -85,6 +128,7 @@ export class Bridge {
             break;
         }
       };
+      // TODO: Add disconnected event to slippi connection
       this.slippiConnection.on(ConnectionEvent.STATUS_CHANGE, onStatusChange);
 
       this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
@@ -106,6 +150,19 @@ export class Bridge {
           case Command.GAME_END:
             console.log('Received GAME_END event.');
             this.currentGameMetadata!.gameStart = undefined;
+            break;
+        }
+      });
+
+      this.slpStream.on(SlpStreamEvent.COMMAND, (data: SlpCommandEventPayload) => {
+        const { command, payload } = data;
+
+        switch (command) {
+          case Command.GAME_START:
+            this.transition(BridgeState.IN_GAME, payload);
+            break;
+          case Command.GAME_END:
+            this.transition(BridgeState.WAITING_FOR_GAME);
             break;
         }
       });
