@@ -26,28 +26,37 @@ export enum BridgeEvent {
   DISCONNECTED = "swb-disconnected"
 }
 
+export enum DisconnectReason {
+  WS_TIMEOUT = "swb-ws-timeout",
+  WS_DISCONNECT = "swb-ws-disconnect",
+  SLIPPI_TIMEOUT = "swb-slippi-timeout",
+  SLIPPI_DISCONNECT = "swb-slippi-disconnect",
+  ERROR = "swb-error", // TODO: Catch-all?
+  QUIT = "swb-quit"
+}
+
 // TODO: Add type to eventemitter
 export class Bridge extends EventEmitter {
   // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
+  private ws?: WebSocket;
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
   private sendBuffer: Buffer[] = [];
-  // TODO: Manage closing of one connection with the other (or whatever is desired)
+  private disconnectReason: DisconnectReason | null = null;
 
-  private ws?: WebSocket;
   public bridgeId?: string;
 
   /**
    * Connect to Slippi and the sink. Returns a promise which is resolved
    * on successful connection to both sides, which gives the assigned bridge ID.
    */
-  public connect(slippiAddress: string, slippiPort: number, wsUrl: string): Promise<string> {
+  public connect(slippiAddress: string, slippiPort: number, wsUrl: string): Promise<string | void> {
     const wsPromise = this.startWsConnection(wsUrl);
     const slippiPromise =  this.startSlippiConnection(slippiAddress, slippiPort)
 
     return Promise.all([wsPromise, slippiPromise])
-      .then(([resolvedBridgeId, _]) => resolvedBridgeId);
+      .then(([maybeResolvedBridgeId, _]) => maybeResolvedBridgeId);
   }
 
   /**
@@ -64,7 +73,7 @@ export class Bridge extends EventEmitter {
     }
   }
 
-  private startWsConnection(wsUrl: string): Promise<string> {
+  private startWsConnection(wsUrl: string): Promise<string | void> {
     const wsPromise = new Promise<string>((resolve, _reject) => {
       this.ws = new WebSocket(wsUrl);
 
@@ -83,22 +92,30 @@ export class Bridge extends EventEmitter {
 
       this.ws.onclose = (msg) => {
         console.log("WebSocket connection closed:", msg);
-        this.disconnect();
+        this.disconnect(DisconnectReason.WS_DISCONNECT);
       };
 
       this.ws.onerror = (err) => {
         console.error(err);
-        this.disconnect();
+        this.disconnect(DisconnectReason.WS_DISCONNECT);
       }
     });
-    return promiseTimeout(WS_CONNECTION_TIMEOUT_MS, wsPromise);
+    return promiseTimeout(WS_CONNECTION_TIMEOUT_MS, wsPromise)
+      .catch(() => { this.disconnect(DisconnectReason.WS_TIMEOUT); });
   }
 
-  public disconnect(): void {
-    this.slippiConnection.disconnect();
-    this.ws?.close();
-    this.ws = undefined;
-    this.emit(BridgeEvent.DISCONNECTED);
+  public quit(): void {
+    this.disconnect(DisconnectReason.QUIT);
+  }
+
+  private disconnect(reason: DisconnectReason): void {
+    if (!this.disconnectReason) {
+      this.disconnectReason = reason;
+      this.slippiConnection.disconnect();
+      this.ws?.close();
+      this.ws = undefined;
+      this.emit(BridgeEvent.DISCONNECTED, reason);
+    }
   }
 
   // startSlippiConnection and promiseTimeout taken from
@@ -112,7 +129,6 @@ export class Bridge extends EventEmitter {
         if (status !== ConnectionStatus.CONNECTED && status !== ConnectionStatus.DISCONNECTED) {
           return;
         }
-        this.slippiConnection.removeListener(ConnectionEvent.STATUS_CHANGE, onStatusChange);
 
         // Complete the promise
         switch (status) {
@@ -122,12 +138,11 @@ export class Bridge extends EventEmitter {
             resolve();
             break;
           case ConnectionStatus.DISCONNECTED:
-            this.disconnect();
-            reject(new Error(`Failed to connect to: ${slippiAddress}:${slippiPort}`));
+            this.disconnect(DisconnectReason.SLIPPI_DISCONNECT);
+            reject(new Error(`Disconnected from Slippi: ${slippiAddress}:${slippiPort}`));
             break;
         }
       };
-      // TODO: Add disconnected event to slippi connection
       this.slippiConnection.on(ConnectionEvent.STATUS_CHANGE, onStatusChange);
 
       this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
@@ -155,7 +170,8 @@ export class Bridge extends EventEmitter {
         reject(err);
       }
     });
-    return promiseTimeout<void>(SLIPPI_CONNECTION_TIMEOUT_MS, assertConnected);
+    return promiseTimeout<void>(SLIPPI_CONNECTION_TIMEOUT_MS, assertConnected)
+      .catch(() => { this.disconnect(DisconnectReason.SLIPPI_TIMEOUT); });
   }
 }
 
