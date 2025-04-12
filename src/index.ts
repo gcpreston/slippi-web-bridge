@@ -1,3 +1,3 @@
 export * from "./constants";
-export { Bridge, BridgeState } from "./bridge";
+export { Bridge, BridgeEvent } from "./bridge";
 export { GameStartType, GameEndType, PlayerType } from "@slippi/slippi-js";
