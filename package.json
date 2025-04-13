@@ -1,9 +1,12 @@
 {
   "name": "slippi-web-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Forward live Slippi connection data to a WebSocket connection.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -r dist/"
