@@ -42,7 +42,7 @@ export class Bridge extends EventEmitter {
   private slippiConnection: Connection = new DolphinConnection();
   private ws?: WebSocket;
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
-  private sendBuffer: Buffer[] = [];
+  private sendBuffer: (string | ArrayBufferLike)[] = [];
   private disconnectReason: DisconnectReason | null = null;
 
   public bridgeId?: string;
@@ -64,12 +64,11 @@ export class Bridge extends EventEmitter {
    * WebSocket connection, the data is stored in a buffer to be sent when
    * a connection is established.
    */
-  private forward(b: Buffer): void {
+  private forward(data: string | ArrayBufferLike): void {
     if (this.ws) {
-      const ab = bufferToArrayBuffer(b)
-      this.ws.send(ab);
+      this.ws.send(data);
     } else {
-      this.sendBuffer.push(b);
+      this.sendBuffer.push(data);
     }
   }
 
@@ -147,7 +146,8 @@ export class Bridge extends EventEmitter {
 
       this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
         this.slpStream.write(b);
-        this.forward(b);
+        const ab = bufferToArrayBuffer(b)
+        this.forward(ab);
       });
 
       this.slpStream.on(SlpStreamEvent.COMMAND, (data: SlpCommandEventPayload) => {
@@ -156,9 +156,11 @@ export class Bridge extends EventEmitter {
         switch (command) {
           case Command.GAME_START:
             this.emit(BridgeEvent.GAME_START, payload);
+            this.forward(JSON.stringify(data));
             break;
           case Command.GAME_END:
             this.emit(BridgeEvent.GAME_END);
+            this.forward(JSON.stringify(data));
             break;
         }
       });
