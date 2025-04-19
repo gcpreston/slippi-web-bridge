@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import WebSocket, { WebSocketServer } from "ws";
-import { DolphinConnection } from "@slippi/slippi-js";
+import { DolphinConnection, SlpRawEventPayload } from "@slippi/slippi-js";
 import {
   ConnectionStatus,
   ConnectionEvent,
@@ -46,10 +46,14 @@ export class Bridge extends EventEmitter {
   private slippiConnection: Connection = new DolphinConnection();
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
   private sendBuffer: ArrayBufferLike[] = [];
-  private disconnectReason: DisconnectReason | null = null;
+
+  // events to send upon client connection
+  private eventPayloadsBinary?: Buffer;
+  private gameStartBinary?: Buffer;
 
   // just one relay server for now
   private relayWs?: WebSocket;
+  private disconnectReason: DisconnectReason | null = null;
   private connectedClients = new Set<WebSocket>();
   private wss: WebSocketServer
 
@@ -62,7 +66,9 @@ export class Bridge extends EventEmitter {
     this.wss.on("connection", (ws) => {
       console.log("Client connection opened");
       this.connectedClients.add(ws);
-      // TODO: Store and send metadata
+      if (this.eventPayloadsBinary && this.gameStartBinary) {
+        ws.send(new Blob([this.eventPayloadsBinary, this.gameStartBinary]))
+      }
 
       ws.on("error", (err) => {
         console.error(err);
@@ -100,7 +106,7 @@ export class Bridge extends EventEmitter {
     }
   }
 
-  private forwardToClients(data: ArrayBufferLike): void {
+  private forwardToClients(data: Buffer): void {
     for (const ws of this.connectedClients) {
       ws.send(data);
     }
@@ -181,9 +187,10 @@ export class Bridge extends EventEmitter {
 
       this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
         this.slpStream.write(b);
-        const ab = bufferToArrayBuffer(b)
+        const ab = bufferToArrayBuffer(b);
+        // TODO: Can I just forward the straight buffer now that it's WebSocket from ws?
         this.forward(ab);
-        this.forwardToClients(ab);
+        this.forwardToClients(b);
       });
 
       this.slpStream.on(SlpStreamEvent.COMMAND, (data: SlpCommandEventPayload) => {
@@ -195,6 +202,23 @@ export class Bridge extends EventEmitter {
             break;
           case Command.GAME_END:
             this.emit(BridgeEvent.GAME_END);
+            break;
+        }
+      });
+
+      this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
+        const { command, payload } = data;
+
+        switch (command) {
+          case Command.MESSAGE_SIZES:
+            this.eventPayloadsBinary = payload;
+            break;
+          case Command.GAME_START:
+            this.gameStartBinary = payload;
+            break;
+          case Command.GAME_END:
+            this.eventPayloadsBinary = undefined;
+            this.gameStartBinary = undefined;
             break;
         }
       });
