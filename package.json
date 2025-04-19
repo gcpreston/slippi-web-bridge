@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "rm -r dist/"
+    "clean": "rm -r dist/",
+    "sandbox": "npm run build && node dist/runLocal.js"
   },
   "author": "Graham Preston",
   "license": "ISC",
@@ -23,6 +24,7 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@slippi/slippi-js": "^6.7.0"
+    "@slippi/slippi-js": "^6.7.0",
+    "ws": "^8.18.1"
   }
 }
