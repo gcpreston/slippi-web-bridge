@@ -33,7 +33,7 @@ export enum DisconnectReason {
   QUIT = "swb-quit"
 }
 
-type BridgeOptions = {
+export type BridgeOptions = {
   server?: { port: number } | false,
   slippi?: {
     address?: string,
