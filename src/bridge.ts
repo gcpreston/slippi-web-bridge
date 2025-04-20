@@ -62,7 +62,6 @@ export class Bridge extends EventEmitter {
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
-  private sendBuffer: Buffer[] = [];
 
   // events to send upon client connection
   private eventPayloadsBinary?: Buffer;
@@ -93,9 +92,7 @@ export class Bridge extends EventEmitter {
         this.wss.on("connection", (ws) => {
           console.log("Client connection opened");
           this.connectedClients.add(ws);
-          if (this.eventPayloadsBinary && this.gameStartBinary) {
-            ws.send(new Blob([this.eventPayloadsBinary, this.gameStartBinary]))
-          }
+          this.sendCurrentGameInfo(ws);
 
           ws.on("error", (err) => {
             console.error("Client connection:", err);
@@ -113,16 +110,19 @@ export class Bridge extends EventEmitter {
       });
   }
 
+  private sendCurrentGameInfo(ws: WebSocket): void {
+    if (this.eventPayloadsBinary && this.gameStartBinary) {
+      ws.send(new Blob([this.eventPayloadsBinary, this.gameStartBinary]))
+    }
+  }
+
   /**
    * Forward Slippi data to the WebSocket connection.
-   * TODO: Rethink send buffer
    */
   private forward(data: Buffer): void {
     // forward to relay
     if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
       this.relayWs.send(data);
-    } else {
-      this.sendBuffer.push(data);
     }
 
     // forward to websocket clients
@@ -139,10 +139,8 @@ export class Bridge extends EventEmitter {
     const wsPromise = new Promise<string>((resolve, _reject) => {
       this.relayWs = new WebSocket(relayServerWsUrl);
 
-      this.relayWs.onopen = () => {
-        for (const b of this.sendBuffer) {
-          this.forward(b);
-        }
+      this.relayWs.onopen = (wsEvent) => {
+        this.sendCurrentGameInfo(wsEvent.target);
       }
 
       this.relayWs.onmessage = (msg) => {
