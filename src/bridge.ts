@@ -1,5 +1,6 @@
-import { EventEmitter } from 'events';
-import { DolphinConnection } from '@slippi/slippi-js';
+import { EventEmitter } from "events";
+import WebSocket, { WebSocketServer } from "ws";
+import { DolphinConnection, SlpRawEventPayload } from "@slippi/slippi-js";
 import {
   ConnectionStatus,
   ConnectionEvent,
@@ -9,18 +10,15 @@ import {
   SlpStreamEvent,
   Command,
   SlpCommandEventPayload
-} from '@slippi/slippi-js';
+} from "@slippi/slippi-js";
+import { SLIPPI_LOCAL_ADDR, SLIPPI_PORTS, WSS_DEFAULT_PORT } from "./constants";
 
 const WS_CONNECTION_TIMEOUT_MS = 3000;
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
 
-function bufferToArrayBuffer(b: Buffer): ArrayBufferLike {
-  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)
-}
-
 export enum BridgeEvent {
-  WS_CONNECTED = "swb-ws-connected",
   SLIPPI_CONNECTED = "swb-slippi-connected",
+  RELAY_CONNECTED = "swb-relay-connected",
   GAME_START = "swb-game-start",
   GAME_END = "swb-game-end",
   DISCONNECTED = "swb-disconnected"
@@ -35,67 +33,130 @@ export enum DisconnectReason {
   QUIT = "swb-quit"
 }
 
+export type BridgeOptions = {
+  server?: { port: number } | false,
+  slippi?: {
+    address?: string,
+    port?: number
+  }
+};
+
+/**
+ * A bridge from Slippi's raw socket stream to a WebSocket.
+ *
+ * Please note that programs using the Bridge class may not exit as expected
+ * when all listeners are disconnected. This may be due to enet, which is used
+ * by Slippi. For this reason, it's recommended that dependents wanting to exit
+ * when the bridge is shut down use:
+ *
+ * ```js
+ * const bridge = new Bridge();
+ * bridge.on(BridgeEvent.DISCONNECTED, (reason) => {
+ *   // handle reason if desired...
+ *   process.exit();
+ * });
+ * ```
+ */
 // TODO: Add type to eventemitter
 export class Bridge extends EventEmitter {
-  // Most basic cases to start
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
-  private ws?: WebSocket;
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
-  private sendBuffer: ArrayBufferLike[] = [];
+
+  // events to send upon client connection
+  private eventPayloadsBinary?: Buffer;
+  private gameStartBinary?: Buffer;
+
+  // just one relay server for now
+  private relayWs?: WebSocket;
   private disconnectReason: DisconnectReason | null = null;
+  private connectedClients = new Set<WebSocket>();
+  private wss?: WebSocketServer
 
   public bridgeId?: string;
 
-  /**
-   * Connect to Slippi and the sink. Returns a promise which is resolved
-   * on successful connection to both sides, which gives the assigned bridge ID.
-   */
-  public connect(slippiAddress: string, slippiPort: number, wsUrl: string): Promise<string | void> {
-    const wsPromise = this.startWsConnection(wsUrl);
-    const slippiPromise =  this.startSlippiConnection(slippiAddress, slippiPort)
+  constructor(options?: BridgeOptions) {
+    super();
 
-    return Promise.all([wsPromise, slippiPromise])
-      .then(([maybeResolvedBridgeId, _]) => maybeResolvedBridgeId);
+    const slippiAddress = options?.slippi?.address || SLIPPI_LOCAL_ADDR;
+    const slippiPort = options?.slippi?.port || SLIPPI_PORTS.DEFAULT;
+
+    this.startSlippiConnection(slippiAddress, slippiPort)
+      .then(() => {
+        if (options?.server === false) return;
+
+        const serverPort = options?.server?.port || WSS_DEFAULT_PORT;
+        this.wss = new WebSocketServer({ port: serverPort });
+        console.log("WebSocket server running on port", serverPort);
+
+        this.wss.on("connection", (ws) => {
+          console.log("Client connection opened");
+          this.connectedClients.add(ws);
+          this.sendCurrentGameInfo(ws);
+
+          ws.on("error", (err) => {
+            console.error("Client connection:", err);
+            this.connectedClients.delete(ws);
+          });
+          ws.on("close", (code) => {
+            console.log("Client connection closed with code", code);
+            this.connectedClients.delete(ws);
+          });
+        });
+      })
+      .catch((reason) => {
+        console.error("Slippi connection:", reason);
+        this.disconnect(DisconnectReason.SLIPPI_TIMEOUT);
+      });
   }
 
-  /**
-   * Forward Slippi data to the WebSocket connection. If there is no current
-   * WebSocket connection, the data is stored in a buffer to be sent when
-   * a connection is established.
-   */
-  private forward(data: ArrayBufferLike): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(data);
-    } else {
-      this.sendBuffer.push(data);
+  private sendCurrentGameInfo(ws: WebSocket): void {
+    if (this.eventPayloadsBinary && this.gameStartBinary) {
+      ws.send(new Blob([this.eventPayloadsBinary, this.gameStartBinary]))
     }
   }
 
-  private startWsConnection(wsUrl: string): Promise<string | void> {
-    const wsPromise = new Promise<string>((resolve, _reject) => {
-      this.ws = new WebSocket(wsUrl);
+  /**
+   * Forward Slippi data to the WebSocket connection.
+   */
+  private forward(data: Buffer): void {
+    // forward to relay
+    if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
+      this.relayWs.send(data);
+    }
 
-      this.ws.onopen = () => {
-        for (const b of this.sendBuffer) {
-          this.forward(b);
-        }
+    // forward to websocket clients
+    for (const ws of this.connectedClients) {
+      ws.send(data);
+    }
+  }
+
+  /**
+   * Connect to a server which wants to receive Slippi events.
+   * TODO: Make receiving bridge ID injectable behavior
+   */
+  public connectToRelayServer(relayServerWsUrl: string): Promise<string | void> {
+    const wsPromise = new Promise<string>((resolve, _reject) => {
+      this.relayWs = new WebSocket(relayServerWsUrl);
+
+      this.relayWs.onopen = (wsEvent) => {
+        this.sendCurrentGameInfo(wsEvent.target);
       }
 
-      this.ws.onmessage = (msg) => {
+      this.relayWs.onmessage = (msg) => {
         console.log("Bridge ID:", msg.data);
-        this.bridgeId = msg.data;
-        this.emit(BridgeEvent.WS_CONNECTED, msg.data);
-        resolve(msg.data);
+        // TODO: Better typing
+        this.bridgeId = msg.data as string;
+        this.emit(BridgeEvent.RELAY_CONNECTED, msg.data);
+        resolve(this.bridgeId);
       };
 
-      this.ws.onclose = (msg) => {
-        console.log("WebSocket connection closed:", msg);
-        this.disconnect(DisconnectReason.WS_DISCONNECT);
+      this.relayWs.onclose = (msg) => {
+        console.log("Server connection closed:", msg.code);
       };
 
-      this.ws.onerror = (err) => {
-        console.error(err);
+      this.relayWs.onerror = (err) => {
+        console.error("Relay connection:", err.message);
         this.disconnect(DisconnectReason.WS_DISCONNECT);
       }
     });
@@ -111,8 +172,8 @@ export class Bridge extends EventEmitter {
     if (!this.disconnectReason) {
       this.disconnectReason = reason;
       this.slippiConnection.disconnect();
-      this.ws?.close();
-      this.ws = undefined;
+      this.relayWs?.close();
+      this.relayWs = undefined;
       this.emit(BridgeEvent.DISCONNECTED, reason);
     }
   }
@@ -133,7 +194,7 @@ export class Bridge extends EventEmitter {
         switch (status) {
           case ConnectionStatus.CONNECTED:
             this.emit(BridgeEvent.SLIPPI_CONNECTED);
-            console.log('Connected to Slippi.');
+            console.log("Connected to Slippi.");
             resolve();
             break;
           case ConnectionStatus.DISCONNECTED:
@@ -146,8 +207,7 @@ export class Bridge extends EventEmitter {
 
       this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
         this.slpStream.write(b);
-        const ab = bufferToArrayBuffer(b)
-        this.forward(ab);
+        this.forward(b);
       });
 
       this.slpStream.on(SlpStreamEvent.COMMAND, (data: SlpCommandEventPayload) => {
@@ -163,6 +223,23 @@ export class Bridge extends EventEmitter {
         }
       });
 
+      this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
+        const { command, payload } = data;
+
+        switch (command) {
+          case Command.MESSAGE_SIZES:
+            this.eventPayloadsBinary = payload;
+            break;
+          case Command.GAME_START:
+            this.gameStartBinary = payload;
+            break;
+          case Command.GAME_END:
+            this.eventPayloadsBinary = undefined;
+            this.gameStartBinary = undefined;
+            break;
+        }
+      });
+
       try {
         // Actually try to connect
         this.slippiConnection.connect(slippiAddress, slippiPort);
@@ -170,8 +247,7 @@ export class Bridge extends EventEmitter {
         reject(err);
       }
     });
-    return promiseTimeout<void>(SLIPPI_CONNECTION_TIMEOUT_MS, assertConnected)
-      .catch(() => { this.disconnect(DisconnectReason.SLIPPI_TIMEOUT); });
+    return promiseTimeout<void>(SLIPPI_CONNECTION_TIMEOUT_MS, assertConnected);
   }
 }
 
