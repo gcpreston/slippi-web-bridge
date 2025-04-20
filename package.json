@@ -9,8 +9,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "rm -r dist/",
-    "sandbox": "npm run build && node dist/runLocal.js"
+    "clean": "rm -r dist/"
   },
   "author": "Graham Preston",
   "license": "ISC",
