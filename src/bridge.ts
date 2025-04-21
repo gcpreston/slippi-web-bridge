@@ -25,8 +25,8 @@ export enum BridgeEvent {
 }
 
 export enum DisconnectReason {
-  WS_TIMEOUT = "swb-ws-timeout",
-  WS_DISCONNECT = "swb-ws-disconnect",
+  RELAY_TIMEOUT = "swb-relay-timeout",
+  RELAY_DISCONNECT = "swb-relay-disconnect",
   SLIPPI_TIMEOUT = "swb-slippi-timeout",
   SLIPPI_DISCONNECT = "swb-slippi-disconnect",
   ERROR = "swb-error", // TODO: Catch-all?
@@ -153,15 +153,16 @@ export class Bridge extends EventEmitter {
 
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
+        this.disconnect(DisconnectReason.RELAY_DISCONNECT);
       };
 
       this.relayWs.onerror = (err) => {
         console.error("Relay connection:", err.message);
-        this.disconnect(DisconnectReason.WS_DISCONNECT);
+        this.disconnect(DisconnectReason.RELAY_DISCONNECT);
       }
     });
     return promiseTimeout(WS_CONNECTION_TIMEOUT_MS, wsPromise)
-      .catch(() => { this.disconnect(DisconnectReason.WS_TIMEOUT); });
+      .catch(() => { this.disconnect(DisconnectReason.RELAY_TIMEOUT); });
   }
 
   public quit(): void {
