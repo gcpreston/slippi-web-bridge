@@ -13,7 +13,7 @@ import {
 } from "@slippi/slippi-js";
 import { SLIPPI_LOCAL_ADDR, SLIPPI_PORTS, WSS_DEFAULT_PORT } from "./constants";
 
-const WS_CONNECTION_TIMEOUT_MS = 3000;
+const RELAY_CONNECTION_TIMEOUT_MS = 8000;
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
 
 export enum BridgeEvent {
@@ -154,6 +154,7 @@ export class Bridge extends EventEmitter {
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
         this.disconnect(DisconnectReason.RELAY_DISCONNECT);
+        // TODO: Attempt to reconnect if connection was lost
       };
 
       this.relayWs.onerror = (err) => {
@@ -161,7 +162,7 @@ export class Bridge extends EventEmitter {
         this.disconnect(DisconnectReason.RELAY_DISCONNECT);
       }
     });
-    return promiseTimeout(WS_CONNECTION_TIMEOUT_MS, wsPromise)
+    return promiseTimeout(RELAY_CONNECTION_TIMEOUT_MS, wsPromise)
       .catch(() => { this.disconnect(DisconnectReason.RELAY_TIMEOUT); });
   }
 

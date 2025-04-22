@@ -1,7 +1,7 @@
 const { Bridge, BridgeEvent } = require("../dist/index.js");
 
 // The websocket URL SpectatorMode
-const SM_WS_URL = "ws://spectator-mode.fly.dev/bridge_socket/websocket";
+const SM_WS_URL = "wss://spectator-mode.fly.dev/bridge_socket/websocket";
 
 const bridge = new Bridge({ server: false });
 
