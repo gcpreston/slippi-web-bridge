@@ -235,6 +235,7 @@ export class Bridge extends EventEmitter {
       this.slippiConnection.disconnect();
       this.relayWs?.close();
       this.relayWs = undefined;
+      this.wss?.close();
       this.emit(BridgeEvent.DISCONNECTED, reason);
     }
   }
