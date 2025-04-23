@@ -13,8 +13,11 @@ import {
 } from "@slippi/slippi-js";
 import { SLIPPI_LOCAL_ADDR, SLIPPI_PORTS, WSS_DEFAULT_PORT } from "./constants";
 
+const RELAY_RECONNECT_MAX_ATTEMPTS = 5;
 const RELAY_CONNECTION_TIMEOUT_MS = 8000;
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
+
+const WS_NORMAL_CLOSE_CODES = [1000, 1001];
 
 export enum BridgeEvent {
   SLIPPI_CONNECTED = "swb-slippi-connected",
@@ -68,8 +71,10 @@ export class Bridge extends EventEmitter {
   private gameStartBinary?: Buffer;
 
   // just one relay server for now
+  private relayWsUrl?: string;
   private relayWs?: WebSocket;
   private disconnectReason: DisconnectReason | null = null;
+  private reconnectAttempt: number = 0;
   private connectedClients = new Set<WebSocket>();
   private wss?: WebSocketServer
 
@@ -136,11 +141,13 @@ export class Bridge extends EventEmitter {
    * TODO: Make receiving bridge ID injectable behavior
    */
   public connectToRelayServer(relayServerWsUrl: string): Promise<string | void> {
+    this.relayWsUrl = relayServerWsUrl;
     const wsPromise = new Promise<string>((resolve, _reject) => {
       this.relayWs = new WebSocket(relayServerWsUrl);
 
       this.relayWs.onopen = (wsEvent) => {
         this.sendCurrentGameInfo(wsEvent.target);
+        this.reconnectAttempt = 0;
       }
 
       this.relayWs.onmessage = (msg) => {
@@ -153,8 +160,11 @@ export class Bridge extends EventEmitter {
 
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
-        this.disconnect(DisconnectReason.RELAY_DISCONNECT);
-        // TODO: Attempt to reconnect if connection was lost
+        if (msg.code in WS_NORMAL_CLOSE_CODES) {
+          this.disconnect(DisconnectReason.RELAY_DISCONNECT);
+        } else {
+          this.reconnectRelay();
+        }
       };
 
       this.relayWs.onerror = (err) => {
@@ -164,6 +174,28 @@ export class Bridge extends EventEmitter {
     });
     return promiseTimeout(RELAY_CONNECTION_TIMEOUT_MS, wsPromise)
       .catch(() => { this.disconnect(DisconnectReason.RELAY_TIMEOUT); });
+  }
+
+  private reconnectRelay(): void {
+    if (this.reconnectAttempt >= RELAY_RECONNECT_MAX_ATTEMPTS) {
+      console.error('Max reconnection attempts reached.');
+      return;
+    }
+
+    const delay = this.getBackoffDelay(this.reconnectAttempt);
+    console.log(`Reconnecting in ${delay}ms`);
+
+    setTimeout(() => {
+      this.reconnectAttempt++;
+      this.connectToRelayServer(this.relayWsUrl!);
+    }, delay);
+  }
+
+  private getBackoffDelay(attempt: number): number {
+    const base = 500; // 0.5 second
+    const max = 30000; // 30 seconds
+    const jitter = Math.random() * 1000;
+    return Math.min(base * 2 ** attempt + jitter, max);
   }
 
   public quit(): void {
