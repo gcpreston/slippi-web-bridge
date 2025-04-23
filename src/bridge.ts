@@ -171,7 +171,6 @@ export class Bridge extends EventEmitter {
       this.relayWs.onopen = (wsEvent) => {
         this.sendCurrentGameInfo(wsEvent.target);
         this.reconnectAttempt = 0;
-        this.relayWs?.send("test");
       }
 
       this.relayWs.onmessage = (msg) => {
