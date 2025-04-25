@@ -44,6 +44,23 @@ export type BridgeOptions = {
   }
 };
 
+type RelayConnectionInfo = {
+  bridge_id: string,
+  reconnect_token: string
+};
+
+// IDEA: Want to properly compartmentalize spectator-mode logic
+// - Connection protocol: Expect to receive bridge ID and reconnect token upon
+//   connection. WebSocket does not support a "connection response"-type thing
+//   like Phoenix Channels do. Maybe look into that for implementation ideas.
+// - This could be 2 main components:
+//   1. The connector between the Slippi data being transferred to this machine
+//   2. A sort of "stream-to-able" interface. The idea would be data can be
+//      agnostically sent to any of these interfaces to forward, and they can
+//      deal with setup, shutdown, etc. **This way each component handles only
+//      one potential connection**, i.e. simplifying the Slippi + relay logic
+//      that currently all lives in Bridge.
+
 /**
  * A bridge from Slippi's raw socket stream to a WebSocket.
  *
@@ -74,6 +91,7 @@ export class Bridge extends EventEmitter {
   private relayWsUrl?: string;
   private relayWs?: WebSocket;
   private disconnectReason: DisconnectReason | null = null;
+  private reconnectToken?: string;
   private reconnectAttempt: number = 0;
   private connectedClients = new Set<WebSocket>();
   private wss?: WebSocketServer
@@ -140,9 +158,14 @@ export class Bridge extends EventEmitter {
    * Connect to a server which wants to receive Slippi events.
    * TODO: Make receiving bridge ID injectable behavior
    */
-  public connectToRelayServer(relayServerWsUrl: string): Promise<string | void> {
+  public connectToRelayServer(relayServerWsUrl: string, reconnectToken?: string): Promise<string | void> {
     this.relayWsUrl = relayServerWsUrl;
+
     const wsPromise = new Promise<string>((resolve, _reject) => {
+      if (reconnectToken) {
+        const params = new URLSearchParams({ reconnect_token: reconnectToken });
+        relayServerWsUrl = `${relayServerWsUrl}?${params.toString()}`;
+      }
       this.relayWs = new WebSocket(relayServerWsUrl);
 
       this.relayWs.onopen = (wsEvent) => {
@@ -151,16 +174,20 @@ export class Bridge extends EventEmitter {
       }
 
       this.relayWs.onmessage = (msg) => {
-        console.log("Bridge ID:", msg.data);
-        // TODO: Better typing
-        this.bridgeId = msg.data as string;
-        this.emit(BridgeEvent.RELAY_CONNECTED, msg.data);
-        resolve(this.bridgeId);
+        if (typeof msg.data === "string") { // should always be true
+          const data: RelayConnectionInfo = JSON.parse(msg.data);
+          console.log("Bridge ID:", data.bridge_id);
+          console.log("Reconnect token:", data.reconnect_token);
+          this.bridgeId = data.bridge_id;
+          this.reconnectToken = data.reconnect_token;
+          this.emit(BridgeEvent.RELAY_CONNECTED, msg.data);
+          resolve(this.bridgeId);
+        }
       };
 
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
-        if (msg.code in WS_NORMAL_CLOSE_CODES) {
+        if (WS_NORMAL_CLOSE_CODES.includes(msg.code)) {
           this.disconnect(DisconnectReason.RELAY_DISCONNECT);
         } else {
           this.reconnectRelay();
@@ -187,7 +214,7 @@ export class Bridge extends EventEmitter {
 
     setTimeout(() => {
       this.reconnectAttempt++;
-      this.connectToRelayServer(this.relayWsUrl!);
+      this.connectToRelayServer(this.relayWsUrl!, this.reconnectToken);
     }, delay);
   }
 
@@ -208,6 +235,7 @@ export class Bridge extends EventEmitter {
       this.slippiConnection.disconnect();
       this.relayWs?.close();
       this.relayWs = undefined;
+      this.wss?.close();
       this.emit(BridgeEvent.DISCONNECTED, reason);
     }
   }
