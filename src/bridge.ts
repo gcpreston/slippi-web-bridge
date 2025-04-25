@@ -187,7 +187,7 @@ export class Bridge extends EventEmitter {
 
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
-        if (msg.code in WS_NORMAL_CLOSE_CODES) {
+        if (WS_NORMAL_CLOSE_CODES.includes(msg.code)) {
           this.disconnect(DisconnectReason.RELAY_DISCONNECT);
         } else {
           this.reconnectRelay();
