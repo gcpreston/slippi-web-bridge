@@ -3,11 +3,17 @@ import {
   DolphinConnection,
   ConsoleConnection,
   ConnectionEvent,
-  ConnectionStatus
+  ConnectionStatus,
+  SlpStream,
+  SlpStreamMode,
+  SlpStreamEvent,
+  SlpRawEventPayload,
+  Command
 } from "@slippi/slippi-js";
 import { promiseTimeout } from "./util";
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
+const DEFAULT_ADAPTER_TIMEOUT_MS = 3000;
 
 /**
  * A StreamAdapter is any object to receive Slippi stream data. Any potential
@@ -26,7 +32,7 @@ const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
  * itself during its own shutdown.
  */
 export interface IStreamAdapter {
-  connectionTimeoutMs: number;
+  connectionTimeoutMs?: number;
   connect(disconnectBridge: () => void): Promise<void>;
   receive(data: Buffer): void;
   disconnect(): void;
@@ -36,7 +42,9 @@ type SlippiConnectionType = "dolphin" | "console";
 
 export class SlippiConnection {
   private slippiConn: Connection;
-  private adapters: IStreamAdapter[];
+  private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
+  private adapters: IStreamAdapter[] = [];
+  private disconnecting: boolean = false;
 
   // events to send upon client connection
   private eventPayloadsBinary?: Buffer;
@@ -53,8 +61,27 @@ export class SlippiConnection {
     }
 
     this.slippiConn.on(ConnectionEvent.DATA, (b: Buffer) => {
+      this.slpStream.write(b);
+    });
+
+    this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
+      const { command, payload } = data;
+
+      switch (command) {
+        case Command.MESSAGE_SIZES:
+          this.eventPayloadsBinary = payload;
+          break;
+        case Command.GAME_START:
+          this.gameStartBinary = payload;
+          break;
+        case Command.GAME_END:
+          this.eventPayloadsBinary = undefined;
+          this.gameStartBinary = undefined;
+          break;
+      }
+
       for (const adapter of this.adapters) {
-        adapter.receive(b);
+        adapter.receive(payload);
       }
     });
   }
@@ -71,9 +98,9 @@ export class SlippiConnection {
     for (const adapter of this.adapters) {
       connectPromises.push(
         promiseTimeout(
-          adapter.connectionTimeoutMs,
-          adapter.connect(this._disconnect).then(() => {
-            this._sendCurrentGameInfo(adapter);
+          adapter.connectionTimeoutMs ?? DEFAULT_ADAPTER_TIMEOUT_MS,
+          adapter.connect(this.disconnect).then(() => {
+            // this._sendCurrentGameInfo(adapter);
           })
         )
       );
@@ -86,15 +113,21 @@ export class SlippiConnection {
     this.adapters.push(adapter);
   }
 
-  private _disconnect(): void {
-    for (const adapter of this.adapters) {
-      adapter.disconnect();
+  public disconnect(): void {
+    if (!this.disconnecting) {
+      this.disconnecting = true;
+      this.slippiConn.disconnect();
+
+      console.log('this.adapters', this.adapters);
+      for (const adapter of this.adapters) {
+        adapter.disconnect();
+      }
     }
-    this.slippiConn.disconnect();
   }
 
   private _connectToSlippi(slippiAddr: string, slippiPort: number): Promise<void> {
     return new Promise((resolve, reject) => {
+      // Handle connection
       this.slippiConn.on(ConnectionEvent.STATUS_CHANGE, (status: ConnectionStatus) => {
         if (status !== ConnectionStatus.CONNECTED && status !== ConnectionStatus.DISCONNECTED) {
           return;
@@ -111,6 +144,7 @@ export class SlippiConnection {
         }
       });
 
+      // Try to connect
       this.slippiConn.connect(slippiAddr, slippiPort);
     });
   }

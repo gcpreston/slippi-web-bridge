@@ -1,4 +1,4 @@
-import { SlippiConnection, IStreamAdapter, Ports } from "../dist/index";
+import { SlippiConnection, SpectatorModeAdapter, IStreamAdapter, Ports } from "../dist/index.js";
 import { SlpStream, SlpStreamMode, SlpStreamEvent, SlpCommandEventPayload, Command } from "@slippi/slippi-js";
 
 class LocalAdapter implements IStreamAdapter {
@@ -19,18 +19,24 @@ class LocalAdapter implements IStreamAdapter {
     });
   }
 
-  public connect() {} // nothing to do
+  public async connect(_disconnect) {} // nothing to do
+  public disconnect() {} // nothing to do
 
   public receive(packet: Buffer) {
     this.slpStream.write(packet);
   }
 }
 
-const conn = new SlippiConnection("dolphin", "127.0.0.1", Ports.DEFAULT);
+const conn = new SlippiConnection("dolphin");
 const relayAdapter = new SpectatorModeAdapter("ws://localhost:4000/bridge_socket/websocket");
 const localAdapter = new LocalAdapter();
 
-conn.addPipe(relayAdapter);
-conn.addPipe(localAdapter);
+conn.pipeTo(relayAdapter);
+conn.pipeTo(localAdapter);
 
-conn.connect(); // calls connect() on each adapter afterwards
+conn.connect("127.0.0.1", Ports.DEFAULT); // calls connect() on each adapter afterwards
+
+setTimeout(() => {
+  console.log('disconnecting...');
+  conn.disconnect();
+}, 10000);
