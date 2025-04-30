@@ -9,6 +9,6 @@ bridge.on(BridgeEvent.SLIPPI_CONNECTED, () => {
   bridge.connectToRelayServer(LOCAL_WS_URL);
 });
 
-bridge.on(BridgeEvent.DISCONNECTED, () => {
-  process.exit();
+bridge.on(BridgeEvent.DISCONNECTED, (reason) => {
+  console.log("Disconnected, reason:", reason);
 });

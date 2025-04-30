@@ -23,7 +23,7 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@slippi/slippi-js": "^6.7.0",
+    "@slippi/slippi-js": "../../open_src/slippi-js",
     "ws": "^8.18.1"
   }
 }
