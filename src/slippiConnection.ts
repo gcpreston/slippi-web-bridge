@@ -38,13 +38,26 @@ export interface IStreamAdapter {
   disconnect(): void;
 }
 
+type AdapterMeta = {
+  adapter: IStreamAdapter,
+  initialized: boolean
+};
+
 type SlippiConnectionType = "dolphin" | "console";
+
+enum SlippiConnectionStatus {
+  INITIALIZED,
+  CONNECTING,
+  CONNECTED,
+  DISCONNECTING,
+  DISCONNECTED
+}
 
 export class SlippiConnection {
   private slippiConn: Connection;
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
-  private adapters: IStreamAdapter[] = [];
-  private disconnecting: boolean = false;
+  private adapters: AdapterMeta[] = [];
+  private status: SlippiConnectionStatus = SlippiConnectionStatus.INITIALIZED;
 
   // events to send upon client connection
   private eventPayloadsBinary?: Buffer;
@@ -80,8 +93,14 @@ export class SlippiConnection {
           break;
       }
 
-      for (const adapter of this.adapters) {
-        adapter.receive(payload);
+      for (const { adapter, initialized } of this.adapters) {
+        // TODO: Temporary solution
+        // - real solution would like each adapter to individually track initialization
+        if (this.status === SlippiConnectionStatus.CONNECTED) {
+        // if (initialized) {
+          adapter.receive(payload);
+        // }
+        }
       }
     });
   }
@@ -91,37 +110,42 @@ export class SlippiConnection {
   //   is doing 2 things: managing the slippi connection, and acting like the
   //   glue. The glue can be its own class, a Bridge maybe :)
 
-  public async connect(slippiAddr: string, slippiPort: number): Promise<void[]> {
+  public async connect(slippiAddr: string, slippiPort: number): Promise<void> {
+    this.status = SlippiConnectionStatus.CONNECTING;
     await promiseTimeout(SLIPPI_CONNECTION_TIMEOUT_MS, this._connectToSlippi(slippiAddr, slippiPort));
 
     const connectPromises: Promise<void>[] = [];
-    for (const adapter of this.adapters) {
+    for (const { adapter } of this.adapters) {
       connectPromises.push(
         promiseTimeout(
           adapter.connectionTimeoutMs ?? DEFAULT_ADAPTER_TIMEOUT_MS,
           adapter.connect(this.disconnect).then(() => {
-            // this._sendCurrentGameInfo(adapter);
+            this._sendCurrentGameInfo(adapter);
           })
         )
       );
     }
 
-    return Promise.all(connectPromises);
+    return Promise.all(connectPromises).then(() => {
+      this.status = SlippiConnectionStatus.CONNECTED;
+    });
   }
 
   public pipeTo(adapter: IStreamAdapter): void {
-    this.adapters.push(adapter);
+    this.adapters.push({ adapter, initialized: false });
   }
 
   public disconnect(): void {
-    if (!this.disconnecting) {
-      this.disconnecting = true;
+    // TODO: This ends up getting called a second time from the adapter
+    //   disconnect method, and for some reason `this` is undefined.
+    if (this && this.status === SlippiConnectionStatus.CONNECTED) {
+      this.status = SlippiConnectionStatus.DISCONNECTING;
       this.slippiConn.disconnect();
 
-      console.log('this.adapters', this.adapters);
-      for (const adapter of this.adapters) {
+      for (const { adapter } of this.adapters) {
         adapter.disconnect();
       }
+      this.status = SlippiConnectionStatus.DISCONNECTED;
     }
   }
 

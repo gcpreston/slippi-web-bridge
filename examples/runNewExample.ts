@@ -23,7 +23,8 @@ class LocalAdapter implements IStreamAdapter {
   public disconnect() {} // nothing to do
 
   public receive(packet: Buffer) {
-    this.slpStream.write(packet);
+    console.log("got a packet :>");
+    // this.slpStream.write(packet);
   }
 }
 

@@ -44,7 +44,8 @@ export class SpectatorModeAdapter implements IStreamAdapter {
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
         if (WS_NORMAL_CLOSE_CODES.includes(msg.code)) {
-          // disconnectBridge();
+          console.log("Calling disconnectBridge:", disconnectBridge);
+          disconnectBridge();
         } else {
           this._reconnect(disconnectBridge);
         }
