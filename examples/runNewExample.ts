@@ -23,8 +23,7 @@ class LocalAdapter implements IStreamAdapter {
   public disconnect() {} // nothing to do
 
   public receive(packet: Buffer) {
-    console.log("got a packet :>");
-    // this.slpStream.write(packet);
+    this.slpStream.write(packet);
   }
 }
 
@@ -38,6 +37,6 @@ conn.pipeTo(localAdapter);
 conn.connect("127.0.0.1", Ports.DEFAULT); // calls connect() on each adapter afterwards
 
 setTimeout(() => {
-  console.log('disconnecting...');
+  console.log("Disconnecting...");
   conn.disconnect();
 }, 10000);

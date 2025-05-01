@@ -3,12 +3,7 @@ import {
   DolphinConnection,
   ConsoleConnection,
   ConnectionEvent,
-  ConnectionStatus,
-  SlpStream,
-  SlpStreamMode,
-  SlpStreamEvent,
-  SlpRawEventPayload,
-  Command
+  ConnectionStatus
 } from "@slippi/slippi-js";
 import { promiseTimeout } from "./util";
 
@@ -38,11 +33,6 @@ export interface IStreamAdapter {
   disconnect(): void;
 }
 
-type AdapterMeta = {
-  adapter: IStreamAdapter,
-  initialized: boolean
-};
-
 type SlippiConnectionType = "dolphin" | "console";
 
 enum SlippiConnectionStatus {
@@ -55,13 +45,9 @@ enum SlippiConnectionStatus {
 
 export class SlippiConnection {
   private slippiConn: Connection;
-  private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
-  private adapters: AdapterMeta[] = [];
+  private adapters: IStreamAdapter[] = [];
   private status: SlippiConnectionStatus = SlippiConnectionStatus.INITIALIZED;
-
-  // events to send upon client connection
-  private eventPayloadsBinary?: Buffer;
-  private gameStartBinary?: Buffer;
+  private sendBuffer: Buffer[] = [];
 
   constructor(connType: SlippiConnectionType) {
     switch (connType) {
@@ -74,33 +60,12 @@ export class SlippiConnection {
     }
 
     this.slippiConn.on(ConnectionEvent.DATA, (b: Buffer) => {
-      this.slpStream.write(b);
-    });
-
-    this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
-      const { command, payload } = data;
-
-      switch (command) {
-        case Command.MESSAGE_SIZES:
-          this.eventPayloadsBinary = payload;
-          break;
-        case Command.GAME_START:
-          this.gameStartBinary = payload;
-          break;
-        case Command.GAME_END:
-          this.eventPayloadsBinary = undefined;
-          this.gameStartBinary = undefined;
-          break;
-      }
-
-      for (const { adapter, initialized } of this.adapters) {
-        // TODO: Temporary solution
-        // - real solution would like each adapter to individually track initialization
-        if (this.status === SlippiConnectionStatus.CONNECTED) {
-        // if (initialized) {
-          adapter.receive(payload);
-        // }
+      if (this.status === SlippiConnectionStatus.CONNECTED) {
+        for (const adapter of this.adapters) {
+          adapter.receive(b);
         }
+      } else {
+        this.sendBuffer.push(b);
       }
     });
   }
@@ -115,24 +80,26 @@ export class SlippiConnection {
     await promiseTimeout(SLIPPI_CONNECTION_TIMEOUT_MS, this._connectToSlippi(slippiAddr, slippiPort));
 
     const connectPromises: Promise<void>[] = [];
-    for (const { adapter } of this.adapters) {
+    for (const adapter of this.adapters) {
       connectPromises.push(
         promiseTimeout(
           adapter.connectionTimeoutMs ?? DEFAULT_ADAPTER_TIMEOUT_MS,
-          adapter.connect(this.disconnect).then(() => {
-            this._sendCurrentGameInfo(adapter);
-          })
+          adapter.connect(this.disconnect)
         )
       );
     }
 
     return Promise.all(connectPromises).then(() => {
       this.status = SlippiConnectionStatus.CONNECTED;
+      for (const adapter of this.adapters) {
+        adapter.receive(Buffer.concat(this.sendBuffer));
+      }
+      this.sendBuffer = [];
     });
   }
 
   public pipeTo(adapter: IStreamAdapter): void {
-    this.adapters.push({ adapter, initialized: false });
+    this.adapters.push(adapter);
   }
 
   public disconnect(): void {
@@ -142,7 +109,7 @@ export class SlippiConnection {
       this.status = SlippiConnectionStatus.DISCONNECTING;
       this.slippiConn.disconnect();
 
-      for (const { adapter } of this.adapters) {
+      for (const adapter of this.adapters) {
         adapter.disconnect();
       }
       this.status = SlippiConnectionStatus.DISCONNECTED;
@@ -171,11 +138,5 @@ export class SlippiConnection {
       // Try to connect
       this.slippiConn.connect(slippiAddr, slippiPort);
     });
-  }
-
-  private _sendCurrentGameInfo(adapter: IStreamAdapter): void {
-    if (this.eventPayloadsBinary && this.gameStartBinary) {
-      adapter.receive(Buffer.concat([this.eventPayloadsBinary, this.gameStartBinary]));
-    }
   }
 }

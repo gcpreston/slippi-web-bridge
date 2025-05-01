@@ -32,19 +32,16 @@ export class SpectatorModeAdapter implements IStreamAdapter {
       this.relayWs.onmessage = (msg) => {
         if (typeof msg.data === "string") { // should always be true
           const data: RelayConnectionInfo = JSON.parse(msg.data);
-          console.log("Bridge ID:", data.bridge_id);
-          console.log("Reconnect token:", data.reconnect_token);
+          console.log("Bridge connected with ID:", data.bridge_id);
           this.reconnectToken = data.reconnect_token;
           this.reconnectAttempt = 0;
           resolve();
         }
       };
-      // TODO: Remove onmessage handler after first message
 
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
         if (WS_NORMAL_CLOSE_CODES.includes(msg.code)) {
-          console.log("Calling disconnectBridge:", disconnectBridge);
           disconnectBridge();
         } else {
           this._reconnect(disconnectBridge);
