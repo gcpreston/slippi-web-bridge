@@ -177,7 +177,6 @@ export class Bridge extends EventEmitter {
         if (typeof msg.data === "string") { // should always be true
           const data: RelayConnectionInfo = JSON.parse(msg.data);
           console.log("Bridge ID:", data.bridge_id);
-          console.log("Reconnect token:", data.reconnect_token);
           this.bridgeId = data.bridge_id;
           this.reconnectToken = data.reconnect_token;
           this.emit(BridgeEvent.RELAY_CONNECTED, msg.data);
