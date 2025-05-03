@@ -17,8 +17,6 @@ const RELAY_RECONNECT_MAX_ATTEMPTS = 5;
 const RELAY_CONNECTION_TIMEOUT_MS = 8000;
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
 
-const WS_NORMAL_CLOSE_CODES = [1000, 1001];
-
 export enum BridgeEvent {
   SLIPPI_CONNECTED = "swb-slippi-connected",
   RELAY_CONNECTED = "swb-relay-connected",
@@ -29,7 +27,6 @@ export enum BridgeEvent {
 
 export enum DisconnectReason {
   RELAY_TIMEOUT = "swb-relay-timeout",
-  RELAY_DISCONNECT = "swb-relay-disconnect",
   SLIPPI_TIMEOUT = "swb-slippi-timeout",
   SLIPPI_DISCONNECT = "swb-slippi-disconnect",
   ERROR = "swb-error", // TODO: Catch-all?
@@ -95,6 +92,7 @@ export class Bridge extends EventEmitter {
   private reconnectAttempt: number = 0;
   private connectedClients = new Set<WebSocket>();
   private wss?: WebSocketServer
+  private didQuit = false;
 
   public bridgeId?: string;
 
@@ -186,16 +184,14 @@ export class Bridge extends EventEmitter {
 
       this.relayWs.onclose = (msg) => {
         console.log("Server connection closed:", msg.code);
-        if (WS_NORMAL_CLOSE_CODES.includes(msg.code)) {
-          this.disconnect(DisconnectReason.RELAY_DISCONNECT);
-        } else {
+        if (!this.didQuit) {
           this.reconnectRelay();
         }
       };
 
       this.relayWs.onerror = (err) => {
         console.error("Relay connection:", err.message);
-        this.disconnect(DisconnectReason.RELAY_DISCONNECT);
+        this.reconnectRelay();
       }
     });
     return promiseTimeout(RELAY_CONNECTION_TIMEOUT_MS, wsPromise)
@@ -225,6 +221,7 @@ export class Bridge extends EventEmitter {
   }
 
   public quit(): void {
+    this.didQuit = true;
     this.disconnect(DisconnectReason.QUIT);
   }
 
