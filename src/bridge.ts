@@ -103,6 +103,8 @@ export class Bridge extends EventEmitter {
             this.status = SlippiConnectionStatus.CONNECTED;
             for (const adapter of this.adapters) {
               if (this.sendBuffer.length > 0) {
+                // TODO: This doesn't work with reconnects that are handled
+                // within SpectatorModeAdapter itself.
                 adapter.receive(Buffer.concat(this.sendBuffer));
               }
             }
@@ -129,7 +131,7 @@ export class Bridge extends EventEmitter {
   private disconnect(reason: DisconnectReason): void {
     // TODO: This ends up getting called a second time from the adapter
     //   disconnect method, and for some reason `this` is undefined.
-    if (this && this.status !== SlippiConnectionStatus.DISCONNECTING && this.status !== SlippiConnectionStatus.DISCONNECTED) {
+    if (this && ![SlippiConnectionStatus.DISCONNECTING, SlippiConnectionStatus.DISCONNECTED].includes(this.status)) {
       this.status = SlippiConnectionStatus.DISCONNECTING;
       this.slippiConn.disconnect();
 
@@ -155,6 +157,7 @@ export class Bridge extends EventEmitter {
             resolve();
             break;
           case ConnectionStatus.DISCONNECTED:
+            this.disconnect(DisconnectReason.SLIPPI_DISCONNECT);
             reject(new Error(`Disconnected from Slippi: ${slippiAddr}:${slippiPort}`));
             break;
         }

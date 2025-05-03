@@ -1,4 +1,4 @@
-import { IStreamAdapter } from "./slippiConnection";
+import { IStreamAdapter } from "./bridge";
 
 const RELAY_RECONNECT_MAX_ATTEMPTS = 5;
 const RELAY_CONNECTION_TIMEOUT_MS = 8000;
@@ -45,7 +45,7 @@ export class SpectatorModeAdapter implements IStreamAdapter {
         if (WS_NORMAL_CLOSE_CODES.includes(msg.code)) {
           disconnectBridge();
         } else {
-          this._reconnect(disconnectBridge);
+          // this._reconnect(disconnectBridge);
         }
       };
 
