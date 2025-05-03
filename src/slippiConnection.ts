@@ -5,6 +5,7 @@ import {
   ConnectionEvent,
   ConnectionStatus
 } from "@slippi/slippi-js";
+import { EventEmitter } from "node:events";
 import { promiseTimeout } from "./util";
 
 const SLIPPI_CONNECTION_TIMEOUT_MS = 3000;
@@ -14,7 +15,7 @@ const DEFAULT_ADAPTER_TIMEOUT_MS = 3000;
  * A StreamAdapter is any object to receive Slippi stream data. Any potential
  * connection parameters (URLs, ports, etc) should be taken in the constructor.
  *
- * The connect method is called by SlippiConnection's connect method, after
+ * The connect method is called by Bridge's connect method, after
  * Slippi itself is connected, and the receive method is called whenever there
  * is a new packet to be processed.
  *
@@ -27,7 +28,8 @@ const DEFAULT_ADAPTER_TIMEOUT_MS = 3000;
  * itself during its own shutdown.
  */
 export interface IStreamAdapter {
-  connectionTimeoutMs?: number;
+  readonly name: string;
+  readonly connectionTimeoutMs?: number;
   connect(disconnectBridge: () => void): Promise<void>;
   receive(data: Buffer): void;
   disconnect(): void;
@@ -43,13 +45,22 @@ enum SlippiConnectionStatus {
   DISCONNECTED
 }
 
-export class SlippiConnection {
+enum DisconnectReason {
+  ADAPTER_DISCONNECT = "swb-adapter-disconnect",
+  SLIPPI_TIMEOUT = "swb-slippi-timeout",
+  SLIPPI_DISCONNECT = "swb-slippi-disconnect",
+  QUIT = "swb-quit"
+}
+
+export class Bridge extends EventEmitter {
   private slippiConn: Connection;
   private adapters: IStreamAdapter[] = [];
   private status: SlippiConnectionStatus = SlippiConnectionStatus.INITIALIZED;
   private sendBuffer: Buffer[] = [];
 
   constructor(connType: SlippiConnectionType) {
+    super();
+
     switch (connType) {
       case "dolphin":
         this.slippiConn = new DolphinConnection();
@@ -70,42 +81,55 @@ export class SlippiConnection {
     });
   }
 
-  // TODO: Does the logic for connecting adapters and forwarding data to them
-  //   want to be handled by another class? Right now it feels like this class
-  //   is doing 2 things: managing the slippi connection, and acting like the
-  //   glue. The glue can be its own class, a Bridge maybe :)
-
   public async connect(slippiAddr: string, slippiPort: number): Promise<void> {
     this.status = SlippiConnectionStatus.CONNECTING;
-    await promiseTimeout(SLIPPI_CONNECTION_TIMEOUT_MS, this._connectToSlippi(slippiAddr, slippiPort));
+    promiseTimeout(SLIPPI_CONNECTION_TIMEOUT_MS, this._connectToSlippi(slippiAddr, slippiPort))
+      .then(() => {
+        this.emit("slippi-connected");
 
-    const connectPromises: Promise<void>[] = [];
-    for (const adapter of this.adapters) {
-      connectPromises.push(
-        promiseTimeout(
-          adapter.connectionTimeoutMs ?? DEFAULT_ADAPTER_TIMEOUT_MS,
-          adapter.connect(this.disconnect)
-        )
-      );
-    }
+        const connectPromises: Promise<void>[] = [];
+        for (const adapter of this.adapters) {
+          connectPromises.push(
+            promiseTimeout(
+              adapter.connectionTimeoutMs ?? DEFAULT_ADAPTER_TIMEOUT_MS,
+              adapter.connect(() => this.disconnect(DisconnectReason.ADAPTER_DISCONNECT))
+            )
+            .then(() => { this.emit("adapter-connected", adapter.name); })
+          );
+        }
 
-    return Promise.all(connectPromises).then(() => {
-      this.status = SlippiConnectionStatus.CONNECTED;
-      for (const adapter of this.adapters) {
-        adapter.receive(Buffer.concat(this.sendBuffer));
-      }
-      this.sendBuffer = [];
-    });
+        return Promise.all(connectPromises)
+          .then(() => {
+            this.status = SlippiConnectionStatus.CONNECTED;
+            for (const adapter of this.adapters) {
+              if (this.sendBuffer.length > 0) {
+                adapter.receive(Buffer.concat(this.sendBuffer));
+              }
+            }
+            this.sendBuffer = [];
+            this.emit("open");
+          })
+          .catch(() => {
+            this.disconnect(DisconnectReason.ADAPTER_DISCONNECT);
+          });
+      })
+      .catch(() => {
+        this.disconnect(DisconnectReason.SLIPPI_TIMEOUT);
+      });
   }
 
   public pipeTo(adapter: IStreamAdapter): void {
     this.adapters.push(adapter);
   }
 
-  public disconnect(): void {
+  public quit(): void {
+    this.disconnect(DisconnectReason.QUIT);
+  }
+
+  private disconnect(reason: DisconnectReason): void {
     // TODO: This ends up getting called a second time from the adapter
     //   disconnect method, and for some reason `this` is undefined.
-    if (this && this.status === SlippiConnectionStatus.CONNECTED) {
+    if (this && this.status !== SlippiConnectionStatus.DISCONNECTING && this.status !== SlippiConnectionStatus.DISCONNECTED) {
       this.status = SlippiConnectionStatus.DISCONNECTING;
       this.slippiConn.disconnect();
 
@@ -113,6 +137,7 @@ export class SlippiConnection {
         adapter.disconnect();
       }
       this.status = SlippiConnectionStatus.DISCONNECTED;
+      this.emit("close", reason);
     }
   }
 

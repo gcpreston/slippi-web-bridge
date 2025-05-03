@@ -2,6 +2,7 @@ import { Bridge, SpectatorModeAdapter, IStreamAdapter, Ports } from "../dist/ind
 import { SlpStream, SlpStreamMode, SlpStreamEvent, SlpCommandEventPayload, Command } from "@slippi/slippi-js";
 
 class LocalAdapter implements IStreamAdapter {
+  public name = "local-adapter";
   private slpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
 
   constructor() {
@@ -20,7 +21,10 @@ class LocalAdapter implements IStreamAdapter {
   }
 
   public async connect(_disconnect) {} // nothing to do
-  public disconnect() {} // nothing to do
+
+  public disconnect() {
+    this.slpStream.end();
+  }
 
   public receive(packet: Buffer) {
     this.slpStream.write(packet);
@@ -34,7 +38,7 @@ const localAdapter = new LocalAdapter();
 bridge.pipeTo(relayAdapter);
 bridge.pipeTo(localAdapter);
 
-bridge.serve("127.0.0.1", Ports.DEFAULT).catch((err) => {
+bridge.connect("127.0.0.1", Ports.DEFAULT).catch((err) => {
   console.log("Caught an error:", err);
 }); // calls connect() on each adapter afterwards
 
@@ -56,5 +60,5 @@ bridge.on("close", (reason) => {
 
 setTimeout(() => {
   console.log("Disconnecting...");
-  bridge.disconnect();
+  bridge.quit();
 }, 5000);

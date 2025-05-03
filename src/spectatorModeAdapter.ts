@@ -10,7 +10,8 @@ type RelayConnectionInfo = {
 };
 
 export class SpectatorModeAdapter implements IStreamAdapter {
-  public connectionTimeoutMs: number = RELAY_CONNECTION_TIMEOUT_MS;
+  public readonly name = "spectator-mode-adapter";
+  public readonly connectionTimeoutMs: number = RELAY_CONNECTION_TIMEOUT_MS;
 
   private wsUrl: string;
   private relayWs?: WebSocket;
@@ -22,7 +23,7 @@ export class SpectatorModeAdapter implements IStreamAdapter {
   }
 
   public connect(disconnectBridge: () => void): Promise<void> {
-    return new Promise((resolve, _reject) => {
+    return new Promise((resolve, reject) => {
       let wsUrlWithParams: string = this.wsUrl;
       if (this.reconnectToken !== undefined) {
         wsUrlWithParams += `?${new URLSearchParams({ "reconnect_token": this.reconnectToken })}`
@@ -50,6 +51,7 @@ export class SpectatorModeAdapter implements IStreamAdapter {
 
       this.relayWs.onerror = (err) => {
         console.error("Relay connection error:", err);
+        reject();
         disconnectBridge();
       }
     });
