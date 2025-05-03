@@ -1,4 +1,4 @@
-import { SlippiConnection, SpectatorModeAdapter, IStreamAdapter, Ports } from "../dist/index.js";
+import { Bridge, SpectatorModeAdapter, IStreamAdapter, Ports } from "../dist/index.js";
 import { SlpStream, SlpStreamMode, SlpStreamEvent, SlpCommandEventPayload, Command } from "@slippi/slippi-js";
 
 class LocalAdapter implements IStreamAdapter {
@@ -27,16 +27,34 @@ class LocalAdapter implements IStreamAdapter {
   }
 }
 
-const conn = new SlippiConnection("dolphin");
+const bridge = new Bridge("dolphin");
 const relayAdapter = new SpectatorModeAdapter("ws://localhost:4000/bridge_socket/websocket");
 const localAdapter = new LocalAdapter();
 
-conn.pipeTo(relayAdapter);
-conn.pipeTo(localAdapter);
+bridge.pipeTo(relayAdapter);
+bridge.pipeTo(localAdapter);
 
-conn.connect("127.0.0.1", Ports.DEFAULT); // calls connect() on each adapter afterwards
+bridge.serve("127.0.0.1", Ports.DEFAULT).catch((err) => {
+  console.log("Caught an error:", err);
+}); // calls connect() on each adapter afterwards
+
+bridge.on("slippi-connected", () => {
+  console.log("Slippi connected.");
+});
+
+bridge.on("adapter-connected", (adapterName) => {
+  console.log("Adapter", adapterName, "connected.");
+});
+
+bridge.on("open", () => {
+  console.log("Bridge fully connected.");
+});
+
+bridge.on("close", (reason) => {
+  console.log("Bridge exited with reason:", reason);
+});
 
 setTimeout(() => {
   console.log("Disconnecting...");
-  conn.disconnect();
-}, 10000);
+  bridge.disconnect();
+}, 5000);
