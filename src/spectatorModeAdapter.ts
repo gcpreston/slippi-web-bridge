@@ -2,7 +2,6 @@ import { IStreamAdapter } from "./bridge";
 
 const RELAY_RECONNECT_MAX_ATTEMPTS = 5;
 const RELAY_CONNECTION_TIMEOUT_MS = 8000;
-const WS_NORMAL_CLOSE_CODES = [1000, 1001];
 
 type RelayConnectionInfo = {
   bridge_id: string,
@@ -17,12 +16,13 @@ export class SpectatorModeAdapter implements IStreamAdapter {
   private relayWs?: WebSocket;
   private reconnectToken?: string;
   private reconnectAttempt: number = 0;
+  private bridgeDisconnected = false;
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
   }
 
-  public connect(disconnectBridge: () => void): Promise<void> {
+  public connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       let wsUrlWithParams: string = this.wsUrl;
       if (this.reconnectToken !== undefined) {
@@ -40,19 +40,15 @@ export class SpectatorModeAdapter implements IStreamAdapter {
         }
       };
 
-      this.relayWs.onclose = (msg) => {
-        console.log("Server connection closed:", msg.code);
-        if (WS_NORMAL_CLOSE_CODES.includes(msg.code)) {
-          disconnectBridge();
-        } else {
-          // this._reconnect(disconnectBridge);
+      this.relayWs.onclose = () => {
+        if (!this.bridgeDisconnected) {
+          this._reconnect();
         }
       };
 
-      this.relayWs.onerror = (err) => {
-        console.error("Relay connection error:", err);
+      this.relayWs.onerror = () => {
         reject();
-        disconnectBridge();
+        this._reconnect();
       }
     });
   }
@@ -64,21 +60,19 @@ export class SpectatorModeAdapter implements IStreamAdapter {
   }
 
   public disconnect(): void {
+    this.bridgeDisconnected = true;
     this.relayWs?.close();
   }
 
-  private _reconnect(disconnectBridge: () => void): void {
+  private _reconnect(): void {
     if (this.reconnectAttempt >= RELAY_RECONNECT_MAX_ATTEMPTS) {
-      console.error('Max reconnection attempts reached.');
       return;
     }
 
     const delay = this._getBackoffDelay(this.reconnectAttempt);
-    console.log(`Reconnecting in ${delay}ms`);
-
     setTimeout(() => {
       this.reconnectAttempt++;
-      this.connect(disconnectBridge);
+      this.connect();
     }, delay);
   }
 

@@ -20,7 +20,7 @@ class LocalAdapter implements IStreamAdapter {
     });
   }
 
-  public async connect(_disconnect) {} // nothing to do
+  public async connect() {} // nothing to do
 
   public disconnect() {
     this.slpStream.end();

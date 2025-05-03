@@ -18,19 +18,11 @@ const DEFAULT_ADAPTER_TIMEOUT_MS = 3000;
  * The connect method is called by Bridge's connect method, after
  * Slippi itself is connected, and the receive method is called whenever there
  * is a new packet to be processed.
- *
- * We consider that in the case of an unrecoverable adapter disconnect, the
- * entire bridge disconnects and exits. For this reason, connect is passed
- * a function calls back to the bridge to disconnect. This should be invoked
- * if/when the adapter goes down. Each adapter is also expected to provide a
- * method to shut itself down. The purpose of this is to be called by the
- * bridge for a graceful exit, and does not need to be called by the adapter
- * itself during its own shutdown.
  */
 export interface IStreamAdapter {
   readonly name: string;
   readonly connectionTimeoutMs?: number;
-  connect(disconnectBridge: () => void): Promise<void>;
+  connect(): Promise<void>;
   receive(data: Buffer): void;
   disconnect(): void;
 }
@@ -45,11 +37,11 @@ enum SlippiConnectionStatus {
   DISCONNECTED
 }
 
-enum DisconnectReason {
-  ADAPTER_DISCONNECT = "swb-adapter-disconnect",
-  SLIPPI_TIMEOUT = "swb-slippi-timeout",
-  SLIPPI_DISCONNECT = "swb-slippi-disconnect",
-  QUIT = "swb-quit"
+export enum DisconnectReason {
+  ADAPTER_TIMEOUT,
+  SLIPPI_TIMEOUT,
+  SLIPPI_DISCONNECT,
+  QUIT
 }
 
 export class Bridge extends EventEmitter {
@@ -92,7 +84,7 @@ export class Bridge extends EventEmitter {
           connectPromises.push(
             promiseTimeout(
               adapter.connectionTimeoutMs ?? DEFAULT_ADAPTER_TIMEOUT_MS,
-              adapter.connect(() => this.disconnect(DisconnectReason.ADAPTER_DISCONNECT))
+              adapter.connect()
             )
             .then(() => { this.emit("adapter-connected", adapter.name); })
           );
@@ -112,7 +104,7 @@ export class Bridge extends EventEmitter {
             this.emit("open");
           })
           .catch(() => {
-            this.disconnect(DisconnectReason.ADAPTER_DISCONNECT);
+            this.disconnect(DisconnectReason.ADAPTER_TIMEOUT);
           });
       })
       .catch(() => {
