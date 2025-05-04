@@ -38,10 +38,10 @@ enum SlippiConnectionStatus {
 }
 
 export enum DisconnectReason {
-  ADAPTER_TIMEOUT,
-  SLIPPI_TIMEOUT,
-  SLIPPI_DISCONNECT,
-  QUIT
+  ADAPTER_TIMEOUT = "adapter-timeout",
+  SLIPPI_TIMEOUT = "slippi-timeout",
+  SLIPPI_DISCONNECT = "slippi-disconnect",
+  QUIT = "quit"
 }
 
 export class Bridge extends EventEmitter {
