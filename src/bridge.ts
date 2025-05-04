@@ -86,7 +86,6 @@ export class Bridge extends EventEmitter {
               adapter.connectionTimeoutMs ?? DEFAULT_ADAPTER_TIMEOUT_MS,
               adapter.connect()
             )
-            .then(() => { this.emit("adapter-connected", adapter.name); })
           );
         }
 

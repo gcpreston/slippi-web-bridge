@@ -50,10 +50,6 @@ bridge.on("slippi-connected", () => {
   console.log("Slippi connected.");
 });
 
-bridge.on("adapter-connected", (adapterName) => {
-  console.log("Adapter", adapterName, "connected.");
-});
-
 bridge.on("open", () => {
   console.log("Bridge fully connected.");
 });
@@ -65,4 +61,4 @@ bridge.on("close", (reason) => {
 setTimeout(() => {
   console.log("Disconnecting...");
   bridge.quit();
-}, 5000);
+}, 30000);
