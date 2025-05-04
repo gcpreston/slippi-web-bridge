@@ -35,6 +35,10 @@ const bridge = new Bridge("dolphin");
 const relayAdapter = new SpectatorModeAdapter("ws://localhost:4000/bridge_socket/websocket");
 const localAdapter = new LocalAdapter();
 
+relayAdapter.on("connect", (bridgeId: string) => {
+  console.log("Connected to SpectatorMode with stream ID:", bridgeId);
+});
+
 bridge.pipeTo(relayAdapter);
 bridge.pipeTo(localAdapter);
 

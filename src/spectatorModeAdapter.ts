@@ -17,6 +17,7 @@ export class SpectatorModeAdapter implements IStreamAdapter {
   private reconnectToken?: string;
   private reconnectAttempt: number = 0;
   private bridgeDisconnected = false;
+  private readonly currentGameTracker = new SlippiGameTracker();
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
@@ -54,9 +55,14 @@ export class SpectatorModeAdapter implements IStreamAdapter {
   }
 
   public receive(packet: Buffer) {
+    this.currentGameTracker.write(packet);
+
     if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
       this.relayWs.send(packet);
     }
+
+    // TODO: The problems with this code:
+    // 1.
   }
 
   public disconnect(): void {
@@ -72,7 +78,12 @@ export class SpectatorModeAdapter implements IStreamAdapter {
     const delay = this._getBackoffDelay(this.reconnectAttempt);
     setTimeout(() => {
       this.reconnectAttempt++;
-      this.connect();
+      this.connect()
+        .then(() => {
+          if (this.currentGameTracker.isInGame()) {
+            this.relayWs?.send(this.currentGameTracker.getEventPayloadsAndGameStart());
+          }
+        });
     }, delay);
   }
 
