@@ -81,8 +81,7 @@ export class Bridge extends EventEmitter {
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
 
   // events to send upon client connection
-  private eventPayloadsBinary?: Buffer;
-  private gameStartBinary?: Buffer;
+  private currentGameEvents: Buffer[] = [];
 
   // just one relay server for now
   private relayWsUrl?: string;
@@ -132,8 +131,8 @@ export class Bridge extends EventEmitter {
   }
 
   private sendCurrentGameInfo(ws: WebSocket): void {
-    if (this.eventPayloadsBinary && this.gameStartBinary) {
-      ws.send(new Blob([this.eventPayloadsBinary, this.gameStartBinary]))
+    if (this.currentGameEvents.length > 0) {
+      ws.send(new Blob(this.currentGameEvents));
     }
   }
 
@@ -284,17 +283,10 @@ export class Bridge extends EventEmitter {
       this.slpStream.on(SlpStreamEvent.RAW, (data: SlpRawEventPayload) => {
         const { command, payload } = data;
 
-        switch (command) {
-          case Command.MESSAGE_SIZES:
-            this.eventPayloadsBinary = payload;
-            break;
-          case Command.GAME_START:
-            this.gameStartBinary = payload;
-            break;
-          case Command.GAME_END:
-            this.eventPayloadsBinary = undefined;
-            this.gameStartBinary = undefined;
-            break;
+        if (command === Command.MESSAGE_SIZES) {
+          this.currentGameEvents = [payload];
+        } else {
+          this.currentGameEvents.push(payload);
         }
       });
 
