@@ -1,6 +1,6 @@
 {
   "name": "slippi-web-bridge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Forward live Slippi connection data to a WebSocket connection.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

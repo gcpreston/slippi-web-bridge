@@ -226,6 +226,10 @@ export class Bridge extends EventEmitter {
 
   private disconnect(reason: DisconnectReason): void {
     if (!this.disconnectReason) {
+      if ([DisconnectReason.QUIT, DisconnectReason.SLIPPI_TIMEOUT].includes(reason)) {
+        this.relayWs?.send("quit");
+      }
+
       this.disconnectReason = reason;
       this.slippiConnection.disconnect();
       this.relayWs?.close();
