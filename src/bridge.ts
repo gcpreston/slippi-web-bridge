@@ -43,6 +43,7 @@ export type BridgeOptions = {
 
 type RelayConnectionInfo = {
   bridge_id: string,
+  stream_ids: number[],
   reconnect_token: string
 };
 
@@ -94,6 +95,7 @@ export class Bridge extends EventEmitter {
   private didQuit = false;
 
   public bridgeId?: string;
+  public streamId?: number;
 
   constructor(options?: BridgeOptions) {
     super();
@@ -132,7 +134,7 @@ export class Bridge extends EventEmitter {
 
   private sendCurrentGameInfo(ws: WebSocket): void {
     if (this.currentGameEvents.length > 0) {
-      ws.send(new Blob(this.currentGameEvents));
+    ws.send(new Blob(this.currentGameEvents.map(e => createPacket(this.streamId!, e))));
     }
   }
 
@@ -140,9 +142,11 @@ export class Bridge extends EventEmitter {
    * Forward Slippi data to the WebSocket connection.
    */
   private forward(data: Buffer): void {
+    const packet = createPacket(this.streamId!, data);
+
     // forward to relay
     if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
-      this.relayWs.send(data);
+      this.relayWs.send(packet);
     }
 
     // forward to websocket clients
@@ -174,7 +178,9 @@ export class Bridge extends EventEmitter {
         if (typeof msg.data === "string") { // should always be true
           const data: RelayConnectionInfo = JSON.parse(msg.data);
           console.log("Bridge ID:", data.bridge_id);
+          console.log("Stream ID:", data.stream_ids[0]);
           this.bridgeId = data.bridge_id;
+          this.streamId = data.stream_ids[0];
           this.reconnectToken = data.reconnect_token;
           this.emit(BridgeEvent.RELAY_CONNECTED, msg.data);
           resolve(this.bridgeId);
@@ -320,3 +326,12 @@ const promiseTimeout = <T>(ms: number, promise: Promise<T>): Promise<T> => {
   // Returns a race between our timeout and the passed in promise
   return Promise.race([promise, timeout]) as Promise<T>;
 };
+
+function createPacket(streamId: number, data: Buffer): Buffer {
+  // Create 8-byte header: stream ID (4 bytes) + data size (4 bytes)
+  const headerBuffer = Buffer.alloc(8);
+  headerBuffer.writeUInt32LE(streamId, 0);
+  headerBuffer.writeUInt32LE(data.length, 4);
+
+  return Buffer.concat([headerBuffer, data]);
+}
