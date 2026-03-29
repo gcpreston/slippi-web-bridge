@@ -1,4 +1,4 @@
-import { Ports } from "@slippi/slippi-js";
+import { Ports } from "@slippi/slippi-js/node";
 
 export const SLIPPI_LOCAL_ADDR = "127.0.0.1";
 export const SLIPPI_PORTS = Ports;

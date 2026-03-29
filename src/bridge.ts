@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import WebSocket, { WebSocketServer } from "ws";
-import { DolphinConnection, SlpRawEventPayload } from "@slippi/slippi-js";
+import { DolphinConnection, SlpRawEventPayload } from "@slippi/slippi-js/node";
 import {
   ConnectionStatus,
   ConnectionEvent,
@@ -10,7 +10,7 @@ import {
   SlpStreamEvent,
   Command,
   SlpCommandEventPayload
-} from "@slippi/slippi-js";
+} from "@slippi/slippi-js/node";
 import { SLIPPI_LOCAL_ADDR, SLIPPI_PORTS, WSS_DEFAULT_PORT } from "./constants";
 
 const RELAY_RECONNECT_MAX_ATTEMPTS = 5;
@@ -82,7 +82,7 @@ export class Bridge extends EventEmitter {
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
 
   // events to send upon client connection
-  private currentGameEvents: Buffer[] = [];
+  private currentGameEvents: Uint8Array[] = [];
 
   // just one relay server for now
   private relayWsUrl?: string;
@@ -141,7 +141,7 @@ export class Bridge extends EventEmitter {
   /**
    * Forward Slippi data to the WebSocket connection.
    */
-  private forward(data: Buffer): void {
+  private forward(data: Uint8Array): void {
     const packet = createPacket(this.streamId!, data);
 
     // forward to relay
@@ -272,8 +272,8 @@ export class Bridge extends EventEmitter {
       };
       this.slippiConnection.on(ConnectionEvent.STATUS_CHANGE, onStatusChange);
 
-      this.slippiConnection.on(ConnectionEvent.DATA, (b: Buffer) => {
-        this.slpStream.write(b);
+      this.slippiConnection.on(ConnectionEvent.DATA, (b: Uint8Array) => {
+        this.slpStream.process(b);
         this.forward(b);
       });
 
@@ -327,7 +327,7 @@ const promiseTimeout = <T>(ms: number, promise: Promise<T>): Promise<T> => {
   return Promise.race([promise, timeout]) as Promise<T>;
 };
 
-function createPacket(streamId: number, data: Buffer): Buffer {
+function createPacket(streamId: number, data: Uint8Array): Buffer {
   // Create 8-byte header: stream ID (4 bytes) + data size (4 bytes)
   const headerBuffer = Buffer.alloc(8);
   headerBuffer.writeUInt32LE(streamId, 0);
