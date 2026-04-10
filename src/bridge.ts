@@ -41,11 +41,16 @@ export type BridgeOptions = {
   }
 };
 
-type RelayConnectionInfo = {
+type RelayConnectionInfoJson = {
   bridge_id: string,
   stream_ids: number[],
   reconnect_token: string
 };
+
+export type RelayConnectionInfo = {
+  bridgeId: string,
+  streamIds: number[]
+}
 
 // IDEA: Want to properly compartmentalize spectator-mode logic
 // - Connection protocol: Expect to receive bridge ID and reconnect token upon
@@ -76,7 +81,7 @@ type RelayConnectionInfo = {
  * ```
  */
 // TODO: Add type to eventemitter
-export class Bridge extends EventEmitter {
+class BridgeEmitter extends EventEmitter {
   // only Dolphin connection
   private slippiConnection: Connection = new DolphinConnection();
   private slpStream: SlpStream = new SlpStream({ mode: SlpStreamMode.AUTO });
@@ -97,17 +102,13 @@ export class Bridge extends EventEmitter {
   public bridgeId?: string;
   public streamId?: number;
 
-  constructor(options?: BridgeOptions) {
+  constructor(slippiHost: string, slippiPort: number, serverPort: number | false) {
     super();
 
-    const slippiAddress = options?.slippi?.address || SLIPPI_LOCAL_ADDR;
-    const slippiPort = options?.slippi?.port || SLIPPI_PORTS.DEFAULT;
-
-    this.startSlippiConnection(slippiAddress, slippiPort)
+    this.startSlippiConnection(slippiHost, slippiPort)
       .then(() => {
-        if (options?.server === false) return;
+        if (serverPort === false) return;
 
-        const serverPort = options?.server?.port || WSS_DEFAULT_PORT;
         this.wss = new WebSocketServer({ port: serverPort });
         console.log("WebSocket server running on port", serverPort);
 
@@ -134,7 +135,7 @@ export class Bridge extends EventEmitter {
 
   private sendCurrentGameInfo(ws: WebSocket): void {
     if (this.currentGameEvents.length > 0) {
-    ws.send(new Blob(this.currentGameEvents.map(e => createPacket(this.streamId!, e))));
+      ws.send(new Blob(this.currentGameEvents.map(e => new Uint8Array(createPacket(this.streamId!, e)))));
     }
   }
 
@@ -176,7 +177,7 @@ export class Bridge extends EventEmitter {
 
       this.relayWs.onmessage = (msg) => {
         if (typeof msg.data === "string") { // should always be true
-          const data: RelayConnectionInfo = JSON.parse(msg.data);
+          const data: RelayConnectionInfoJson = JSON.parse(msg.data);
           console.log("Bridge ID:", data.bridge_id);
           console.log("Stream ID:", data.stream_ids[0]);
           this.bridgeId = data.bridge_id;
@@ -308,6 +309,85 @@ export class Bridge extends EventEmitter {
       }
     });
     return promiseTimeout<void>(SLIPPI_CONNECTION_TIMEOUT_MS, assertConnected);
+  }
+}
+
+export enum ConnectResultError {
+  SLIPPI_CONNECT_ERROR,
+  RELAY_CONNECT_ERROR
+}
+
+export type ConnectResult = {
+  data: RelayConnectionInfo | null,
+  error: ConnectResultError | null
+};
+
+export type BridgeConnectOptions = {
+  slippiHost?: string,
+  slippiPort?: number
+};
+
+export class Bridge {
+  private disconnectCallback: (reason: DisconnectReason) => void = () => {};
+  private bridge?: BridgeEmitter;
+
+  public async connect(relayWsUrl: string, options?: BridgeConnectOptions): Promise<ConnectResult> {
+    const slippiHost = options?.slippiHost ?? SLIPPI_LOCAL_ADDR;
+    const slippiPort = options?.slippiPort ?? SLIPPI_PORTS.DEFAULT;
+
+    const bridge = new BridgeEmitter(slippiHost, slippiPort, false);
+    this.bridge = bridge;
+
+    // Setup listeners
+    bridge.on(BridgeEvent.DISCONNECTED, this.disconnectCallback);
+
+    const slippiConnectionPromise = new Promise<void>((resolve, _) => {
+      const onSlippiConnected = () => {
+        bridge.removeListener(BridgeEvent.SLIPPI_CONNECTED, onSlippiConnected);
+        resolve();
+      };
+
+      bridge.on(BridgeEvent.SLIPPI_CONNECTED, onSlippiConnected);
+    });
+
+    const relayConnectPromise = new Promise<ConnectResult>((resolve, _reject) => {
+      const onRelayConnected = (data: string) => {
+        bridge.removeListener(BridgeEvent.RELAY_CONNECTED, onRelayConnected);
+        const parsed: RelayConnectionInfoJson = JSON.parse(data);
+
+        const connectionInfo: RelayConnectionInfo = {
+          bridgeId: parsed.bridge_id,
+          streamIds: parsed.stream_ids
+        };
+
+        resolve({ data: connectionInfo, error: null });
+      };
+
+      bridge.on(BridgeEvent.RELAY_CONNECTED, onRelayConnected);
+    });
+
+    // Initiate connection
+    bridge.connectToRelayServer(relayWsUrl);
+
+    // TODO: Make promiseTimeout not throw
+    try {
+      await promiseTimeout(SLIPPI_CONNECTION_TIMEOUT_MS, slippiConnectionPromise);
+    } catch {
+      return { data: null, error: ConnectResultError.SLIPPI_CONNECT_ERROR };
+    }
+
+    return promiseTimeout(RELAY_CONNECTION_TIMEOUT_MS, relayConnectPromise)
+      .catch(() => ({ data: null, error: ConnectResultError.RELAY_CONNECT_ERROR }));
+  }
+
+  public onDisconnect(callback: (reason: DisconnectReason) => void) {
+    this.disconnectCallback = callback;
+  }
+
+  public quit() {
+    if (this.bridge) {
+      this.bridge.quit();
+    }
   }
 }
 
