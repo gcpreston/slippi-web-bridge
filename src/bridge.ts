@@ -11,7 +11,7 @@ import {
   Command,
   SlpCommandEventPayload
 } from "@slippi/slippi-js/node";
-import { SLIPPI_LOCAL_ADDR, SLIPPI_PORTS, WSS_DEFAULT_PORT } from "./constants";
+import { SLIPPI_LOCAL_ADDR, SLIPPI_PORTS } from "./constants";
 
 const RELAY_RECONNECT_MAX_ATTEMPTS = 5;
 const RELAY_CONNECTION_TIMEOUT_MS = 8000;
