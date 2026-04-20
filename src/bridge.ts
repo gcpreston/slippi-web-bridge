@@ -66,19 +66,6 @@ export type RelayConnectionInfo = {
 
 /**
  * A bridge from Slippi's raw socket stream to a WebSocket.
- *
- * Please note that programs using the Bridge class may not exit as expected
- * when all listeners are disconnected. This may be due to enet, which is used
- * by Slippi. For this reason, it's recommended that dependents wanting to exit
- * when the bridge is shut down use:
- *
- * ```js
- * const bridge = new Bridge();
- * bridge.on(BridgeEvent.DISCONNECTED, (reason) => {
- *   // handle reason if desired...
- *   process.exit();
- * });
- * ```
  */
 // TODO: Add type to eventemitter
 class BridgeEmitter extends EventEmitter {
@@ -95,64 +82,36 @@ class BridgeEmitter extends EventEmitter {
   private disconnectReason: DisconnectReason | null = null;
   private reconnectToken?: string;
   private reconnectAttempt: number = 0;
-  private connectedClients = new Set<WebSocket>();
-  private wss?: WebSocketServer
   private didQuit = false;
 
   public bridgeId?: string;
   public streamId?: number;
 
-  constructor(slippiHost: string, slippiPort: number, serverPort: number | false) {
+  constructor(slippiHost: string, slippiPort: number) {
     super();
 
     this.startSlippiConnection(slippiHost, slippiPort)
-      .then(() => {
-        if (serverPort === false) return;
-
-        this.wss = new WebSocketServer({ port: serverPort });
-        console.log("WebSocket server running on port", serverPort);
-
-        this.wss.on("connection", (ws) => {
-          console.log("Client connection opened");
-          this.connectedClients.add(ws);
-          this.sendCurrentGameInfo(ws);
-
-          ws.on("error", (err) => {
-            console.error("Client connection:", err);
-            this.connectedClients.delete(ws);
-          });
-          ws.on("close", (code) => {
-            console.log("Client connection closed with code", code);
-            this.connectedClients.delete(ws);
-          });
-        });
-      })
       .catch((reason) => {
         console.error("Slippi connection:", reason);
         this.disconnect(DisconnectReason.SLIPPI_TIMEOUT);
       });
   }
 
-  private sendCurrentGameInfo(ws: WebSocket): void {
-    if (this.currentGameEvents.length > 0) {
-      ws.send(new Blob(this.currentGameEvents.map(e => new Uint8Array(createPacket(this.streamId!, e)))));
+  private forwardIfConnected(data: Uint8Array): void {
+    if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN && this.streamId) {
+      const packet = createPacket(this.streamId, data);
+      this.relayWs.send(packet);
     }
   }
 
-  /**
-   * Forward Slippi data to the WebSocket connection.
-   */
-  private forward(data: Uint8Array): void {
-    const packet = createPacket(this.streamId!, data);
+  private forwardOrAddToBuffer(data: Uint8Array): void {
+    this.currentGameEvents.push(data);
+    this.forwardIfConnected(data);
+  }
 
-    // forward to relay
-    if (this.relayWs && this.relayWs.readyState === WebSocket.OPEN) {
-      this.relayWs.send(packet);
-    }
-
-    // forward to websocket clients
-    for (const ws of this.connectedClients) {
-      ws.send(data);
+  private forwardBuffer(): void {
+    for (const data of this.currentGameEvents) {
+      this.forwardIfConnected(data);
     }
   }
 
@@ -170,8 +129,7 @@ class BridgeEmitter extends EventEmitter {
       }
       this.relayWs = new WebSocket(relayServerWsUrl);
 
-      this.relayWs.onopen = (wsEvent) => {
-        this.sendCurrentGameInfo(wsEvent.target);
+      this.relayWs.onopen = () => {
         this.reconnectAttempt = 0;
       }
 
@@ -184,6 +142,7 @@ class BridgeEmitter extends EventEmitter {
           this.streamId = data.stream_ids[0];
           this.reconnectToken = data.reconnect_token;
           this.emit(BridgeEvent.RELAY_CONNECTED, msg.data);
+          this.forwardBuffer();
           resolve(this.bridgeId);
         }
       };
@@ -241,7 +200,6 @@ class BridgeEmitter extends EventEmitter {
       this.slippiConnection.disconnect();
       this.relayWs?.close();
       this.relayWs = undefined;
-      this.wss?.close();
       this.emit(BridgeEvent.DISCONNECTED, reason);
     }
   }
@@ -275,7 +233,7 @@ class BridgeEmitter extends EventEmitter {
 
       this.slippiConnection.on(ConnectionEvent.DATA, (b: Uint8Array) => {
         this.slpStream.process(b);
-        this.forward(b);
+        this.forwardOrAddToBuffer(b);
       });
 
       this.slpStream.on(SlpStreamEvent.COMMAND, (data: SlpCommandEventPayload) => {
@@ -335,7 +293,7 @@ export class Bridge {
     const slippiHost = options?.slippiHost ?? SLIPPI_LOCAL_ADDR;
     const slippiPort = options?.slippiPort ?? SLIPPI_PORTS.DEFAULT;
 
-    const bridge = new BridgeEmitter(slippiHost, slippiPort, false);
+    const bridge = new BridgeEmitter(slippiHost, slippiPort);
     this.bridge = bridge;
 
     // Setup listeners
